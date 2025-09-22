@@ -1,0 +1,29 @@
+# Use the official Node.js runtime as the base image
+FROM node:18-alpine
+
+# Install netcat for database connectivity check
+RUN apk add --no-cache netcat-openbsd
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Copy scripts and environment file
+COPY scripts/init-db-simple.js ./
+COPY scripts/start-dev.sh ./
+COPY .env ./
+
+# Make startup script executable
+RUN chmod +x start-dev.sh
+
+# Expose port
+EXPOSE 3000
+
+# Start development server
+CMD ["./start-dev.sh"] 

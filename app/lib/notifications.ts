@@ -1,0 +1,107 @@
+import pool from './database';
+
+export interface NotificationData {
+  userId: number;
+  workOrderId: number;
+  type: 'approval' | 'rejection' | 'completion';
+  title: string;
+  message: string;
+}
+
+export async function createNotification(data: NotificationData) {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `INSERT INTO notifications (user_id, work_order_id, type, title, message)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [data.userId, data.workOrderId, data.type, data.title, data.message]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function createWorkOrderApprovalNotification(workOrderId: number, approverId: number) {
+  const client = await pool.connect();
+  try {
+    // Get work order details
+    const workOrderResult = await client.query(
+      'SELECT work_order_no, equipment_number, requested_by_id FROM work_orders WHERE id = $1',
+      [workOrderId]
+    );
+
+    if (workOrderResult.rows.length === 0) {
+      throw new Error('Work order not found');
+    }
+
+    const workOrder = workOrderResult.rows[0];
+    
+    // Get approver name
+    const approverResult = await client.query(
+      'SELECT username FROM users WHERE id = $1',
+      [approverId]
+    );
+    
+    const approverName = approverResult.rows[0]?.username || 'Admin';
+
+    // Create notification for the work order creator
+    if (workOrder.requested_by_id) {
+      await createNotification({
+        userId: workOrder.requested_by_id,
+        workOrderId: workOrderId,
+        type: 'approval',
+        title: 'Work Order Approved',
+        message: `Your work order ${workOrder.work_order_no} for equipment ${workOrder.equipment_number} has been approved by ${approverName}.`
+      });
+    }
+  } catch (error) {
+    console.error('Error creating approval notification:', error);
+  } finally {
+    client.release();
+  }
+}
+
+export async function createWorkOrderRejectionNotification(workOrderId: number, rejectorId: number, reason: string) {
+  const client = await pool.connect();
+  try {
+    // Get work order details
+    const workOrderResult = await client.query(
+      'SELECT work_order_no, equipment_number, requested_by_id FROM work_orders WHERE id = $1',
+      [workOrderId]
+    );
+
+    if (workOrderResult.rows.length === 0) {
+      throw new Error('Work order not found');
+    }
+
+    const workOrder = workOrderResult.rows[0];
+    
+    // Get rejector name
+    const rejectorResult = await client.query(
+      'SELECT username FROM users WHERE id = $1',
+      [rejectorId]
+    );
+    
+    const rejectorName = rejectorResult.rows[0]?.username || 'Admin';
+
+    // Create notification for the work order creator
+    if (workOrder.requested_by_id) {
+      await createNotification({
+        userId: workOrder.requested_by_id,
+        workOrderId: workOrderId,
+        type: 'rejection',
+        title: 'Work Order Rejected',
+        message: `Your work order ${workOrder.work_order_no} for equipment ${workOrder.equipment_number} has been rejected by ${rejectorName}. Reason: ${reason || 'No reason provided'}.`
+      });
+    }
+  } catch (error) {
+    console.error('Error creating rejection notification:', error);
+  } finally {
+    client.release();
+  }
+}
