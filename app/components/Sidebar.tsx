@@ -58,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     ...(user && (user.role === 'admin' || user.role === 'superadmin') ? [
       { href: '/technicians', label: 'Technicians', icon: '🛠️' },
       { href: '/reports', label: 'Reports', icon: '📈' },
-      { href: '/reports/progress', label: 'Progress Report', icon: '📊' },
+      { href: '/reports/job-allocation', label: 'Job Allocation Report', icon: '📋' },
     ] : []),    
     ...(user && (user.role === 'superadmin') ? [
       { href: '/users', label: 'Users', icon: '👤' },
@@ -126,7 +126,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
         <div className="p-6">
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center space-x-2">
-              <h2 className="text-xl font-bold">Workshops Section</h2>
+              <h2 className="text-xl font-bold">MGSEM Section</h2>
             </div>
             <button
               onClick={onToggle}

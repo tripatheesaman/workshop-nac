@@ -13,7 +13,8 @@ export async function POST(request: NextRequest) {
       description,
       action_date,
       start_time,
-      end_time
+      end_time,
+      is_completed = false
     } = body;
 
     // Validation
@@ -131,6 +132,19 @@ export async function POST(request: NextRequest) {
       ]);
 
       const action = result.rows[0];
+
+      // Also create an entry in action_dates table
+      await client.query(`
+        INSERT INTO action_dates (
+          action_id, action_date, start_time, end_time, is_completed
+        ) VALUES ($1, $2, $3, $4, $5)
+      `, [
+        action.id,
+        action_date,
+        start_time, // Use original time string, not timestamp
+        end_time || start_time, // Use original time string, not timestamp
+        is_completed
+      ]);
 
       return NextResponse.json<ApiResponse<Action>>({
         success: true,

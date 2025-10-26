@@ -1,10 +1,10 @@
-
+version: "3.9"
 
 services:
   # PostgreSQL Database
   db:
     image: postgres:15-alpine
-    container_name: wks_postgres
+    container_name: mgsem_postgres
     env_file:
       - .env
     environment:
@@ -12,12 +12,12 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
-      - /srv/wks-work-order/postgres-data:/var/lib/postgresql/data
+      - /srv/grsd-mgsem/db:/var/lib/postgresql/data
       - ./scripts/init-db-simple.js:/docker-entrypoint-initdb.d/01-init-db.js:ro
     networks:
-      - wks_network
+      - mgsem_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s
@@ -29,9 +29,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wks_work_order_management
+    container_name: mgsem_app
     ports:
-      - "3001:3000"
+      - "3003:3000"
     env_file:
       - .env
     environment:
@@ -42,13 +42,11 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - /srv/wks-work-order/uploads:/app/public/uploads:rw
+      - /srv/grsd-mgsem/uploads:/app/public/uploads:rw
     networks:
-      - wks_network
+      - mgsem_network
     restart: unless-stopped
 
-# Volumes are now mapped to /srv/wks-work-order
-
 networks:
-  wks_network:
-    driver: bridge 
+  mgsem_network:
+    driver: bridge

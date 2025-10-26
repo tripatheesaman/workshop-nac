@@ -75,39 +75,46 @@ export async function GET(request: NextRequest) {
       
   
 
-      // Categorize work types based on the actual values from the create form
+      // Categorize work types based on the new work types
       const categorizeWorkType = (workType: string): string => {
         const type = workType.toLowerCase().trim();
         
-        // Exact matches first
-        if (type === 'fabrication') return 'fabrication';
-        if (type === 'wheel' || type === 'tyre') return 'wheel_tyre';
-        if (type === 'dent' || type === 'paint') return 'dent_paint';
-        if (type === 'battery' || type === 'electrical') return 'battery_electrical';
-        if (type === 'uld containers') return 'uld_containers';
+        // Exact matches for new work types
         if (type === 'mechanical') return 'mechanical';
+        if (type === 'electrical') return 'electrical';
+        if (type === 'hydraulics') return 'hydraulics';
+        if (type === 'schedule check') return 'schedule_check';
+        if (type === 'electrical repair') return 'electrical_repair';
+        if (type === 'painting') return 'painting';
+        if (type === 'miscellaneous') return 'miscellaneous';
+        if (type === 'customer request') return 'customer_request';
+        if (type === 'other') return 'other';
         
-        // For "Others" with custom text, check if it contains keywords
-        if (type.includes('fabrication')) return 'fabrication';
-        if (type.includes('wheel') || type.includes('tyre') || type.includes('tire')) return 'wheel_tyre';
-        if (type.includes('dent') || type.includes('paint')) return 'dent_paint';
-        if (type.includes('battery') || type.includes('electrical')) return 'battery_electrical';
-        if (type.includes('uld') || type.includes('container')) return 'uld_containers';
+        // Fallback for partial matches
         if (type.includes('mechanical')) return 'mechanical';
+        if (type.includes('electrical')) return 'electrical';
+        if (type.includes('hydraulic')) return 'hydraulics';
+        if (type.includes('schedule') && type.includes('check')) return 'schedule_check';
+        if (type.includes('painting') || type.includes('paint')) return 'painting';
+        if (type.includes('miscellaneous')) return 'miscellaneous';
+        if (type.includes('customer')) return 'customer_request';
         
-        // Everything else goes to miscellaneous
-        return 'miscellaneous';
+        // Everything else goes to other
+        return 'other';
       };
+
 
       // Aggregate work orders by category and status
       const categories = [
-        'fabrication',
-        'wheel_tyre', 
-        'dent_paint',
-        'battery_electrical',
-        'uld_containers',
         'mechanical',
-        'miscellaneous'
+        'electrical',
+        'hydraulics',
+        'schedule_check',
+        'electrical_repair',
+        'painting',
+        'miscellaneous',
+        'customer_request',
+        'other'
       ];
 
       const categoryData = new Map<string, {
@@ -193,13 +200,15 @@ export async function GET(request: NextRequest) {
 
       // Fill in data for each category
       const categoryRows = [
-        { category: 'fabrication', row: 6 },
-        { category: 'wheel_tyre', row: 7 },
-        { category: 'dent_paint', row: 8 },
-        { category: 'battery_electrical', row: 9 },
-        { category: 'uld_containers', row: 10 },
-        { category: 'mechanical', row: 11 },
-        { category: 'miscellaneous', row: 12 }
+        { category: 'mechanical', row: 6 },
+        { category: 'electrical', row: 7 },
+        { category: 'hydraulics', row: 8 },
+        { category: 'schedule_check', row: 9 },
+        { category: 'electrical_repair', row: 10 },
+        { category: 'painting', row: 11 },
+        { category: 'miscellaneous', row: 12 },
+        { category: 'customer_request', row: 13 },
+        { category: 'other', row: 14 }
       ];
 
       categoryRows.forEach(({ category, row }) => {

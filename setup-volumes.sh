@@ -5,10 +5,10 @@
 
 set -e
 
-echo "🔧 Setting up volume directories for WKS Work Order Management System..."
+echo "🔧 Setting up volume directories for MGSEM Work Order Management System..."
 
 # Base directory
-BASE_DIR="/srv/wks-work-order"
+BASE_DIR="/srv/mgsem-work-order"
 
 # Create base directory
 echo "📁 Creating base directory: $BASE_DIR"

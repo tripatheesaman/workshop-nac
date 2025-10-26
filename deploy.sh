@@ -20,12 +20,12 @@ fi
 
 # Setup volume directories if they don't exist
 echo "🔧 Setting up volume directories..."
-if [ ! -d "/srv/wks-work-order" ]; then
+if [ ! -d "/srv/mgsem-work-order" ]; then
     echo "📁 Creating volume directories..."
-    sudo mkdir -p /srv/wks-work-order/{postgres-data,uploads,logs}
-    sudo chown -R 999:999 /srv/wks-work-order/postgres-data
-    sudo chown -R 1001:1001 /srv/wks-work-order/uploads
-    sudo chmod -R 755 /srv/wks-work-order/{postgres-data,uploads,logs}
+    sudo mkdir -p /srv/mgsem-work-order/{postgres-data,uploads,logs}
+    sudo chown -R 999:999 /srv/mgsem-work-order/postgres-data
+    sudo chown -R 1001:1001 /srv/mgsem-work-order/uploads
+    sudo chmod -R 755 /srv/mgsem-work-order/{postgres-data,uploads,logs}
     echo "✅ Volume directories created"
 else
     echo "✅ Volume directories already exist"

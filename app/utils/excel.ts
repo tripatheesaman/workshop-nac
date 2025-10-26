@@ -33,26 +33,85 @@ export class ExcelHelper {
     this.worksheet.getCell(cellAddress).value = value;
   }
 
-  mergeCells(range: string): void {
-    this.worksheet.mergeCells(range);
-  }
-
+  /** Merge cells safely without duplicating or overlapping existing merges */
   safeMergeCells(range: string): void {
     try {
-      // Check if the range is already merged
-      const [startCell, endCell] = range.split(':');
-      const startCellObj = this.worksheet.getCell(startCell);
-      const endCellObj = this.worksheet.getCell(endCell);
-      
-      // If either cell is already part of a merge, don't merge again
-      if (startCellObj.master || endCellObj.master) {
-        return;
+      const normalizedRange = range.toUpperCase();
+      const existingMerges = this.worksheet.model.merges || [];
+
+      const overlaps = existingMerges.some(existing => {
+        const [start1, end1] = existing.split(':');
+        const [start2, end2] = normalizedRange.split(':');
+        if (!end1 || !end2) return false;
+        const s1 = this.worksheet.getCell(start1);
+        const e1 = this.worksheet.getCell(end1);
+        const s2 = this.worksheet.getCell(start2);
+        const e2 = this.worksheet.getCell(end2);
+        return !(
+          e1.row < s2.row ||
+          s1.row > e2.row ||
+          e1.col < s2.col ||
+          s1.col > e2.col
+        );
+      });
+
+      if (!overlaps) {
+        this.worksheet.mergeCells(normalizedRange);
       }
-      
-      this.worksheet.mergeCells(range);
     } catch (error) {
-      // If merging fails, just continue without merging
+      console.warn(`Could not safely merge cells ${range}:`, error);
+    }
+  }
+
+  /** Force merge by removing any overlapping merges first */
+  forceMergeCells(range: string): void {
+    try {
+      const normalizedRange = range.toUpperCase();
+      const [startCell, endCell] = normalizedRange.split(':');
+      if (!endCell) return;
+
+      const start = this.worksheet.getCell(startCell);
+      const end = this.worksheet.getCell(endCell);
+      const sRow = start.row;
+      const eRow = end.row;
+      const sCol = start.col;
+      const eCol = end.col;
+
+      // Unmerge overlapping ranges before applying new merge
+      const existingMerges = this.worksheet.model.merges || [];
+      for (const existing of existingMerges) {
+        const [exStart, exEnd] = existing.split(':');
+        const s1 = this.worksheet.getCell(exStart);
+        const e1 = this.worksheet.getCell(exEnd);
+        const overlaps = !(
+          e1.row < sRow || s1.row > eRow || e1.col < sCol || s1.col > eCol
+        );
+        if (overlaps) {
+          try {
+            this.worksheet.unMergeCells(existing);
+          } catch {}
+        }
+      }
+
+      // Finally merge
+      this.worksheet.mergeCells(normalizedRange);
+    } catch (error) {
       console.warn(`Could not merge cells ${range}:`, error);
+    }
+  }
+
+  /** Unmerge all cells within a row range */
+  unmergeRowRange(startRow: number, endRow: number): void {
+    const merges = [...(this.worksheet.model.merges || [])];
+    for (const merge of merges) {
+      try {
+        const [startCell, endCell] = merge.split(':');
+        const mergeStartRow = this.worksheet.getCell(startCell).row;
+        const mergeEndRow = this.worksheet.getCell(endCell).row;
+        if (Number(mergeStartRow) >= startRow && Number(mergeEndRow) <= endRow) {
+          this.worksheet.unMergeCells(merge);
+        }
+      } catch {}
     }
   }
 
@@ -61,180 +120,100 @@ export class ExcelHelper {
     return rowNumber + 1;
   }
 
-  copyRowAndInsertAbove(sourceRow: number, insertAboveRow: number, columns: string[]): number {
-    // Insert a new row above the specified row
+  /** Insert a new row with formatting copied from source row (no merges) */
+  insertRowWithFormatting(sourceRow: number, insertAboveRow: number, columns: string[]): number {
+    // Only unmerge the exact row being inserted to avoid affecting other rows
+    this.unmergeRowRange(insertAboveRow, insertAboveRow);
     this.worksheet.insertRow(insertAboveRow, insertAboveRow);
-    
-    // Copy the entire row structure from source to the new row
+
     const sourceRowObj = this.worksheet.getRow(sourceRow);
     const newRowObj = this.worksheet.getRow(insertAboveRow);
-    
-    // Copy row height
-    if (sourceRowObj.height) {
-      newRowObj.height = sourceRowObj.height;
-    }
-    
-    // Copy all cells in the specified columns
+    if (sourceRowObj.height) newRowObj.height = sourceRowObj.height;
+
     columns.forEach(col => {
-      const sourceCell = this.worksheet.getCell(`${col}${sourceRow}`);
-      const newCell = this.worksheet.getCell(`${col}${insertAboveRow}`);
-      
-      // Copy cell value
-      newCell.value = sourceCell.value;
-      
-      // Copy cell style completely
-      if (sourceCell.style) {
-        newCell.style = JSON.parse(JSON.stringify(sourceCell.style));
-      }
-      
-      // Copy borders
-      if (sourceCell.border) {
-        newCell.border = JSON.parse(JSON.stringify(sourceCell.border));
-      }
-      
-      // Copy fill
-      if (sourceCell.fill) {
-        newCell.fill = JSON.parse(JSON.stringify(sourceCell.fill));
-      }
-      
-      // Copy font
-      if (sourceCell.font) {
-        newCell.font = JSON.parse(JSON.stringify(sourceCell.font));
-      }
-      
-      // Copy alignment
-      if (sourceCell.alignment) {
-        newCell.alignment = JSON.parse(JSON.stringify(sourceCell.alignment));
-      }
-      
-      // Copy number format
-      if (sourceCell.numFmt) {
-        newCell.numFmt = sourceCell.numFmt;
-      }
-      
-      // Copy protection
-      if (sourceCell.protection) {
-        newCell.protection = JSON.parse(JSON.stringify(sourceCell.protection));
-      }
+      const sCell = this.worksheet.getCell(`${col}${sourceRow}`);
+      const tCell = this.worksheet.getCell(`${col}${insertAboveRow}`);
+      tCell.value = sCell.value;
+      tCell.style = JSON.parse(JSON.stringify(sCell.style || {}));
+      if (sCell.border) tCell.border = JSON.parse(JSON.stringify(sCell.border));
+      if (sCell.fill) tCell.fill = JSON.parse(JSON.stringify(sCell.fill));
+      if (sCell.font) tCell.font = JSON.parse(JSON.stringify(sCell.font));
+      if (sCell.alignment) tCell.alignment = JSON.parse(JSON.stringify(sCell.alignment));
+      if (sCell.numFmt) tCell.numFmt = sCell.numFmt;
+      if (sCell.protection) tCell.protection = JSON.parse(JSON.stringify(sCell.protection));
     });
-    
-    // Handle merged cells for the source row
-    // Get all merged ranges that include the source row
-    const mergedRanges = this.worksheet.model.merges || [];
-    
-    mergedRanges.forEach(mergeRange => {
-      const [startCell, endCell] = mergeRange.split(':');
-      const startRow = parseInt(startCell.replace(/\D/g, ''));
-      const endRow = parseInt(endCell.replace(/\D/g, ''));
-      
-      // Check if this merge range includes the source row
-      if (startRow <= sourceRow && sourceRow <= endRow) {
-        // Calculate the new merge range for the inserted row
-        const newStartRow = startRow === sourceRow ? insertAboveRow : startRow;
-        const newEndRow = endRow === sourceRow ? insertAboveRow : endRow;
-        
-        // Create new merge range
+
+    return insertAboveRow;
+  }
+
+  copyRowAndInsertAbove(sourceRow: number, insertAboveRow: number, columns: string[]): number {
+    this.worksheet.insertRow(insertAboveRow, insertAboveRow);
+    const sRow = this.worksheet.getRow(sourceRow);
+    const tRow = this.worksheet.getRow(insertAboveRow);
+    if (sRow.height) tRow.height = sRow.height;
+
+    columns.forEach(col => {
+      const sCell = this.worksheet.getCell(`${col}${sourceRow}`);
+      const tCell = this.worksheet.getCell(`${col}${insertAboveRow}`);
+      tCell.value = sCell.value;
+      tCell.style = JSON.parse(JSON.stringify(sCell.style || {}));
+      if (sCell.border) tCell.border = JSON.parse(JSON.stringify(sCell.border));
+      if (sCell.fill) tCell.fill = JSON.parse(JSON.stringify(sCell.fill));
+      if (sCell.font) tCell.font = JSON.parse(JSON.stringify(sCell.font));
+      if (sCell.alignment) tCell.alignment = JSON.parse(JSON.stringify(sCell.alignment));
+    });
+    return insertAboveRow;
+  }
+
+  applyBorder(cellAddress: string, borderStyle: Partial<ExcelJS.Borders>): void {
+    const cell = this.worksheet.getCell(cellAddress);
+    cell.border = borderStyle;
+  }
+
+  applyBorderToCells(cellAddresses: string[], borderStyle: Partial<ExcelJS.Borders>): void {
+    cellAddresses.forEach(address => this.applyBorder(address, borderStyle));
+  }
+
+  mergeCellsWithBorders(range: string, borderStyle?: Partial<ExcelJS.Borders>): void {
+    try {
+      this.forceMergeCells(range);
+      if (borderStyle) {
+        const [startCell, endCell] = range.split(':');
         const startCol = startCell.replace(/\d/g, '');
         const endCol = endCell.replace(/\d/g, '');
-        const newMergeRange = `${startCol}${newStartRow}:${endCol}${newEndRow}`;
-        
-        try {
-          // Apply the merge to the new row
-          this.worksheet.mergeCells(newMergeRange);
-          
-          // Copy border formatting from the source merged range to the new merged range
-          const sourceStartCell = this.worksheet.getCell(startCell);
-          
-          // Copy borders from the source merged range
-          if (sourceStartCell.border) {
-            // Apply borders to all cells in the new merged range
-            for (let col = startCol.charCodeAt(0); col <= endCol.charCodeAt(0); col++) {
-              const colLetter = String.fromCharCode(col);
-              const newCell = this.worksheet.getCell(`${colLetter}${newStartRow}`);
-              
-              // Create a clean border object for the new merged cell
-              const newBorder: Partial<ExcelJS.Borders> = {};
-              
-              // Always apply top and bottom borders to all cells in the merged range
-              if (sourceStartCell.border.top) {
-                newBorder.top = JSON.parse(JSON.stringify(sourceStartCell.border.top));
-              }
-              if (sourceStartCell.border.bottom) {
-                newBorder.bottom = JSON.parse(JSON.stringify(sourceStartCell.border.bottom));
-              }
-              
-              // Apply left border only to the leftmost cell
-              if (col === startCol.charCodeAt(0) && sourceStartCell.border.left) {
-                newBorder.left = JSON.parse(JSON.stringify(sourceStartCell.border.left));
-              }
-              
-              // Apply right border only to the rightmost cell - THIS IS THE KEY FIX
-              if (col === endCol.charCodeAt(0)) {
-                // Always apply right border to rightmost cell, even if source doesn't have it
-                // This ensures the merged cell has a proper right border
-                if (sourceStartCell.border.right) {
-                  newBorder.right = JSON.parse(JSON.stringify(sourceStartCell.border.right));
-                } else {
-                  // If source doesn't have right border, create a default one
-                  newBorder.right = { style: 'thin', color: { argb: 'FF000000' } };
-                }
-              }
-              
-              // Apply the clean border
-              newCell.border = newBorder;
-            }
-          }
-        } catch (error) {
-          console.warn(`Could not merge cells ${newMergeRange}:`, error);
+        const row = startCell.replace(/\D/g, '');
+        for (let c = startCol.charCodeAt(0); c <= endCol.charCodeAt(0); c++) {
+          const colLetter = String.fromCharCode(c);
+          this.applyBorder(`${colLetter}${row}`, borderStyle);
         }
       }
-    });
-    
-    return insertAboveRow;
+    } catch (error) {
+      console.warn(`Could not merge cells with borders ${range}:`, error);
+    }
   }
 
   copyRowFormatting(sourceRow: number, targetRow: number, columns: string[]): void {
     columns.forEach(col => {
-      const sourceCell = this.worksheet.getCell(`${col}${sourceRow}`);
-      const targetCell = this.worksheet.getCell(`${col}${targetRow}`);
-      
-      if (sourceCell.style) {
-        targetCell.style = { ...sourceCell.style };
-      }
-      if (sourceCell.border) {
-        targetCell.border = { ...sourceCell.border };
-      }
-      if (sourceCell.fill) {
-        targetCell.fill = { ...sourceCell.fill };
-      }
-      if (sourceCell.font) {
-        targetCell.font = { ...sourceCell.font };
-      }
-      if (sourceCell.alignment) {
-        targetCell.alignment = { ...sourceCell.alignment };
-      }
+      const s = this.worksheet.getCell(`${col}${sourceRow}`);
+      const t = this.worksheet.getCell(`${col}${targetRow}`);
+      t.style = { ...s.style };
+      if (s.border) t.border = { ...s.border };
+      if (s.fill) t.fill = { ...s.fill };
+      if (s.font) t.font = { ...s.font };
+      if (s.alignment) t.alignment = { ...s.alignment };
     });
   }
 
   copyRowStructure(sourceRow: number, targetRow: number, columns: string[]): void {
-    // Copy cell styles and formatting
     this.copyRowFormatting(sourceRow, targetRow, columns);
-    
-    // Copy row height
-    const sourceRowObj = this.worksheet.getRow(sourceRow);
-    const targetRowObj = this.worksheet.getRow(targetRow);
-    if (sourceRowObj.height) {
-      targetRowObj.height = sourceRowObj.height;
-    }
+    const s = this.worksheet.getRow(sourceRow);
+    const t = this.worksheet.getRow(targetRow);
+    if (s.height) t.height = s.height;
   }
 
   async saveToFile(outputPath: string): Promise<void> {
-    // Ensure directory exists
     const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     await this.workbook.xlsx.writeFile(outputPath);
   }
 
@@ -245,41 +224,98 @@ export class ExcelHelper {
 
 export function formatTime(timeString: string): string {
   if (!timeString) return '';
-  
-  // If time is already in HH:MM format, return as is
-  if (/^\d{2}:\d{2}$/.test(timeString)) {
-    return timeString;
-  }
-  
-  // If time is in HH:MM:SS format, extract HH:MM
-  if (/^\d{2}:\d{2}:\d{2}$/.test(timeString)) {
-    return timeString.substring(0, 5);
-  }
-  
-  // If time is a timestamp or other format, try to parse
+  if (/^\d{2}:\d{2}$/.test(timeString)) return timeString;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(timeString)) return timeString.substring(0, 5);
   try {
     const date = new Date(timeString);
-    if (!isNaN(date.getTime())) {
-      return date.toTimeString().substring(0, 5);
-    }
+    if (!isNaN(date.getTime())) return date.toTimeString().substring(0, 5);
   } catch {
     console.warn('Could not parse time:', timeString);
   }
-  
   return timeString;
 }
 
 export function formatDate(dateString: string): string {
   if (!dateString) return '';
-  
   try {
     const date = new Date(dateString);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split('T')[0]; // YYYY-MM-DD format
-    }
+    if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
   } catch {
     console.warn('Could not parse date:', dateString);
   }
-  
   return dateString;
+}
+
+export function calculateDuration(startTime: string, endTime: string): string {
+  if (!startTime || !endTime) return '';
+  
+  try {
+    // Parse time strings (HH:MM or HH:MM:SS)
+    const parseTime = (timeStr: string): { hours: number; minutes: number } => {
+      const parts = timeStr.split(':').map(p => parseInt(p, 10));
+      return { hours: parts[0] || 0, minutes: parts[1] || 0 };
+    };
+    
+    const start = parseTime(startTime);
+    const end = parseTime(endTime);
+    
+    // Calculate total minutes
+    let totalMinutes = (end.hours * 60 + end.minutes) - (start.hours * 60 + start.minutes);
+    
+    // Handle negative duration (crosses midnight)
+    if (totalMinutes < 0) {
+      totalMinutes += 24 * 60;
+    }
+    
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  } catch (error) {
+    console.warn('Could not calculate duration:', error);
+    return '';
+  }
+}
+
+export function getWorkTypeCode(workType: string): string {
+  if (!workType) return '';
+  
+  const workTypeLower = workType.toLowerCase();
+  
+  // Exact matches for new work types
+  if (workTypeLower === 'mechanical') return 'M';
+  if (workTypeLower === 'electrical') return 'E';
+  if (workTypeLower === 'hydraulics') return 'H';
+  if (workTypeLower === 'schedule check') return 'SC';
+  if (workTypeLower === 'electrical repair') return 'ER';
+  if (workTypeLower === 'painting') return 'P';
+  if (workTypeLower === 'miscellaneous') return 'MI';
+  if (workTypeLower === 'customer request') return 'CR';
+  if (workTypeLower === 'other') return 'O';
+  
+  // Fallback for partial matches
+  if (workTypeLower.includes('electrical')) return 'E';
+  if (workTypeLower.includes('mechanical')) return 'M';
+  if (workTypeLower.includes('painting') || workTypeLower.includes('paint')) return 'P';
+  if (workTypeLower.includes('hydraulic')) return 'H';
+  if (workTypeLower.includes('schedule') && workTypeLower.includes('check')) return 'SC';
+  if (workTypeLower.includes('miscellaneous')) return 'MI';
+  if (workTypeLower.includes('customer')) return 'CR';
+  
+  // Default fallback
+  return workType.substring(0, 2).toUpperCase();
+}
+
+export function getTechnicianInitials(name: string): string {
+  if (!name) return '';
+  
+  const nameParts = name.trim().split(/\s+/);
+  
+  if (nameParts.length === 1) {
+    // Single name, take first 2 letters
+    return nameParts[0].substring(0, 2).toUpperCase();
+  }
+  
+  // Multiple parts, take first letter of each
+  return nameParts.map(part => part.charAt(0).toUpperCase()).join('');
 }

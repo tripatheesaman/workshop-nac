@@ -53,6 +53,18 @@ export interface ActionTechnician {
   created_at: string;
 }
 
+export interface ActionDate {
+  id: number;
+  action_id: number;
+  action_date: string;
+  start_time: string;
+  end_time: string;
+  is_completed: boolean;
+  created_at: string;
+  updated_at: string;
+  technicians?: ActionTechnician[];
+}
+
 export interface Action {
   id: number;
   finding_id: number;
@@ -63,6 +75,8 @@ export interface Action {
   created_at: string;
   updated_at: string;
   technicians?: ActionTechnician[];
+  action_dates?: ActionDate[];
+  is_completed?: boolean;
 }
 
 export interface SparePart {

@@ -5,11 +5,11 @@
 
 set -e
 
-echo "🔄 Restoring WKS Work Order Management System from backup..."
+echo "🔄 Restoring MGSEM Work Order Management System from backup..."
 
 # Base directory
-BASE_DIR="/srv/wks-work-order"
-BACKUP_DIR="/srv/wks-work-order/backups"
+BASE_DIR="/srv/mgsem-work-order"
+BACKUP_DIR="/srv/mgsem-work-order/backups"
 
 # Check if backup directory exists
 if [ ! -d "$BACKUP_DIR" ]; then

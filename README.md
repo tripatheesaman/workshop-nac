@@ -46,7 +46,7 @@ Create a `.env.local` file in the root directory:
 # Database Configuration
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=wks
+DB_NAME=mgsem
 DB_USER=your_username
 DB_PASSWORD=your_password
 
@@ -61,9 +61,9 @@ NODE_ENV=development
 ```
 
 ### 4. Set up the database
-Make sure PostgreSQL is running and create a database named `wks`:
+Make sure PostgreSQL is running and create a database named `mgsem`:
 ```sql
-CREATE DATABASE wks;
+CREATE DATABASE mgsem;
 ```
 
 ### 5. Initialize the database
@@ -97,7 +97,7 @@ The application will be available at [http://localhost:3000](http://localhost:30
 2. **Set up volume directories (first time only)**
    ```bash
    npm run setup-volumes
-   # or manually: sudo mkdir -p /srv/wks-work-order/{postgres-data,uploads,logs}
+   # or manually: sudo mkdir -p /srv/mgsem-work-order/{postgres-data,uploads,logs}
    ```
 
 3. **Build and start containers**
@@ -115,10 +115,10 @@ The application will be available at [http://localhost:3000](http://localhost:30
 - **Database**: 5433 (external) → 5432 (internal)
 
 ### Volume Directories
-- **PostgreSQL Data**: `/srv/wks-work-order/postgres-data`
-- **File Uploads**: `/srv/wks-work-order/uploads`
-- **Application Logs**: `/srv/wks-work-order/logs`
-- **Backups**: `/srv/wks-work-order/backups`
+- **PostgreSQL Data**: `/srv/mgsem-work-order/postgres-data`
+- **File Uploads**: `/srv/mgsem-work-order/uploads`
+- **Application Logs**: `/srv/mgsem-work-order/logs`
+- **Backups**: `/srv/mgsem-work-order/backups`
 
 ### Volume Management
 ```bash

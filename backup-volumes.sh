@@ -5,13 +5,13 @@
 
 set -e
 
-echo "💾 Creating backup of WKS Work Order Management System..."
+echo "💾 Creating backup of MGSEM Work Order Management System..."
 
 # Base directory
-BASE_DIR="/srv/wks-work-order"
-BACKUP_DIR="/srv/wks-work-order/backups"
+BASE_DIR="/srv/mgsem-work-order"
+BACKUP_DIR="/srv/mgsem-work-order/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_NAME="wks-backup-$TIMESTAMP"
+BACKUP_NAME="mgsem-backup-$TIMESTAMP"
 
 # Create backup directory
 echo "📁 Creating backup directory..."
@@ -40,6 +40,6 @@ echo "📊 Backup size: $(du -h "$BACKUP_DIR/$BACKUP_NAME.tar.gz" | cut -f1)"
 
 # Clean up old backups (keep last 7 days)
 echo "🧹 Cleaning up old backups..."
-find "$BACKUP_DIR" -name "wks-backup-*.tar.gz" -mtime +7 -delete
+find "$BACKUP_DIR" -name "mgsem-backup-*.tar.gz" -mtime +7 -delete
 
 echo "🎉 Backup process completed!"

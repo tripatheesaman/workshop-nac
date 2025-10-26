@@ -90,66 +90,92 @@ export async function GET(request: NextRequest) {
       const templatePath = path.join(process.cwd(), 'public', 'template_file.xlsx');
       const excelHelper = await ExcelHelper.loadTemplate(templatePath, 'Template Sheet');
 
-      // Fill in work order details
-      excelHelper.setCellValue('E1', workOrder.work_order_no);
-      excelHelper.setCellValue('E2', formatDate(workOrder.work_order_date));
-      excelHelper.setCellValue('E3', workOrder.equipment_number);
-      excelHelper.setCellValue('E4', workOrder.km_hrs || 'N/A');
-      excelHelper.setCellValue('E5', workOrder.work_type);
-      excelHelper.setCellValue('C12', `Job Requested By: ${workOrder.requested_by}`);
-      excelHelper.setCellValue('A12', `Job Allocated By: ${workOrder.first_name} ${workOrder.last_name}`);
+      // Fill in work order details according to new template specifications
+      excelHelper.setCellValue('G1', workOrder.work_order_no);
+      excelHelper.setCellValue('G2', formatDate(workOrder.work_order_date));
+      excelHelper.setCellValue('G3', workOrder.equipment_number);
+      excelHelper.setCellValue('G4', workOrder.km_hrs || 'N/A');
+      excelHelper.setCellValue('G5', workOrder.requested_by || `${workOrder.first_name} ${workOrder.last_name}`);
+      excelHelper.setCellValue('G6', workOrder.work_type);
+      excelHelper.setCellValue('G7', workOrder.work_completed_date ? formatDate(workOrder.work_completed_date) : '');
+      excelHelper.setCellValue('G8', workOrder.job_allocation_time ? formatTime(workOrder.job_allocation_time) : '');
 
-      // Fill in findings (starting from row 8, max 3)
+      // Fill in findings (starting from row B12, max 5)
       const findings = findingsResult.rows.filter(finding => finding && finding.description && finding.description.trim() !== '');
-      let currentRow = 8;
-      let findingsExceededLimit = false;
-      let findingsEndRow = 7; // Start after header
+      let currentRow = 12;
+      let findingsEndRow = 11; // Start after header
       
       // Track the first data row for findings (this will be our template for copying)
-      const firstFindingDataRow = 8;
+      const firstFindingDataRow = 12;
       
-      // Fill in first 3 findings in template rows
-      for (let i = 0; i < Math.min(findings.length, 3); i++) {
+      // Fill in first 5 findings in template rows
+      for (let i = 0; i < Math.min(findings.length, 5); i++) {
         const finding = findings[i];
         excelHelper.setCellValue(`A${currentRow}`, i + 1);
         excelHelper.setCellValue(`B${currentRow}`, finding.description);
         
-        // Merge cells B, C, D, E for findings
-        excelHelper.safeMergeCells(`B${currentRow}:E${currentRow}`);
+        // Merge cells B to G for findings
+        excelHelper.forceMergeCells(`B${currentRow}:G${currentRow}`);
+        
+        // Apply border to G cell
+        excelHelper.applyBorder(`G${currentRow}`, {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'thin', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
+        });
+        
         currentRow++;
       }
       
       // Update findings end row
       findingsEndRow = currentRow - 1;
 
-      // If more than 3 findings, add rows dynamically and fill them
-      if (findings.length > 3) {
-        findingsExceededLimit = true;
-        for (let i = 3; i < findings.length; i++) {
-          // Copy from the first finding data row (row 8) and insert above current row
-          const newRowNumber = excelHelper.copyRowAndInsertAbove(firstFindingDataRow, currentRow, ['A', 'B', 'C', 'D', 'E']);
+      // If more than 5 findings, add rows dynamically and fill them
+      if (findings.length > 5) {
+        for (let i = 5; i < findings.length; i++) {
+          // Insert new row with formatting from the first finding data row (row 12)
+          const newRowNumber = excelHelper.insertRowWithFormatting(firstFindingDataRow, currentRow, ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
           
           // Fill in the finding data for the newly inserted row
           excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
           excelHelper.setCellValue(`B${newRowNumber}`, findings[i].description);
           
-          // Merge cells B, C, D, E for findings
-          excelHelper.safeMergeCells(`B${newRowNumber}:E${newRowNumber}`);
+          // Merge cells B to G for findings
+          excelHelper.forceMergeCells(`B${newRowNumber}:G${newRowNumber}`);
           
           // Move to next row for next iteration
           currentRow = newRowNumber + 1;
         }
         
+        // Reapply merges to all findings rows (template + dynamic)
+        for (let i = 0; i < findings.length; i++) {
+          const rowNum = firstFindingDataRow + i;
+          excelHelper.forceMergeCells(`B${rowNum}:G${rowNum}`);
+        }
+        
+        // Reapply borders to all G cells in findings
+        const findingsGAddresses = [];
+        for (let i = 0; i < findings.length; i++) {
+          findingsGAddresses.push(`G${firstFindingDataRow + i}`);
+        }
+        excelHelper.applyBorderToCells(findingsGAddresses, {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'thin', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
+        });
+        
         // Update findings end row after dynamic insertion
         findingsEndRow = currentRow - 1;
       }
 
-      // Fill in actions (only if actions exist)
-      let actionRow = 15; // Default to static position
-      let actionsExceededLimit = false;
+      // Fill in actions (starting from row 21 if findings <= 5, else 5 rows after last finding)
+      let actionRow = 21; // Default static position
+      let actionsEndRow = 29; // Default end row for actions section
       
       // First, collect all actions from all findings (filter out blank/empty actions)
-      const allActions: Array<{ id: number; description: string; action_date: string; start_time: string; end_time: string; }> = [];
+      const allActions = [];
       for (const finding of findings) {
         if (finding.actions && Array.isArray(finding.actions)) {
           for (const action of finding.actions) {
@@ -163,134 +189,186 @@ export async function GET(request: NextRequest) {
       // Only fill in actions if there are any
       const actionIdToSymbolNumber = new Map<number, number>();
       if (allActions.length > 0) {
-        // Determine action starting row based ONLY on findings status
-        if (findings.length <= 3) {
-          // Standard case: findings ≤3 - use static positioning
-          actionRow = 15;
+        // Determine action starting row based on findings status
+        if (findings.length <= 5) {
+          // Standard case: findings ≤5 - use static positioning
+          actionRow = 21;
         } else {
-          // Dynamic case: findings >3
-          actionRow = findingsEndRow + 4; // 4 rows after the last finding row
+          // Dynamic case: findings >5 - start 5 rows after last finding
+          actionRow = findingsEndRow + 5;
         }
         
         // Track the first action data row for copying (BEFORE the loop increments actionRow)
         const firstActionDataRow = actionRow;
         
-        // Build map from action id to its symbol number (row index) for later technician aggregation
-
-        // Fill in actions (max 3 initially, then add more rows if needed)
-        for (let i = 0; i < Math.min(allActions.length, 3); i++) {
+        // Fill in actions (max 9 initially, then add more rows if needed)
+        for (let i = 0; i < Math.min(allActions.length, 9); i++) {
           const action = allActions[i];
           excelHelper.setCellValue(`A${actionRow}`, i + 1);
           actionIdToSymbolNumber.set(action.id, i + 1);
           excelHelper.setCellValue(`B${actionRow}`, action.description);
-          excelHelper.setCellValue(`C${actionRow}`, formatTime(action.start_time));
-          excelHelper.setCellValue(`D${actionRow}`, formatTime(action.end_time));
-          excelHelper.setCellValue(`E${actionRow}`, formatDate(action.action_date));
+          excelHelper.setCellValue(`E${actionRow}`, formatTime(action.start_time));
+          excelHelper.setCellValue(`F${actionRow}`, formatTime(action.end_time));
+          excelHelper.setCellValue(`G${actionRow}`, formatDate(action.action_date));
+          
+          // Merge cells B to D for actions
+          excelHelper.forceMergeCells(`B${actionRow}:D${actionRow}`);
+          
+          // Apply border to G cell
+          excelHelper.applyBorder(`G${actionRow}`, {
+            top: { style: 'thin', color: { argb: 'FF000000' } },
+            bottom: { style: 'thin', color: { argb: 'FF000000' } },
+            left: { style: 'thin', color: { argb: 'FF000000' } },
+            right: { style: 'thin', color: { argb: 'FF000000' } }
+          });
           
           actionRow++;
         }
-        
 
-
-        // If more than 3 actions, add rows dynamically and fill them
-        if (allActions.length > 3) {
-          actionsExceededLimit = true;
-          for (let i = 3; i < allActions.length; i++) {
-            // Copy from the first action data row and insert above current action row
-            const newRowNumber = excelHelper.copyRowAndInsertAbove(firstActionDataRow, actionRow, ['A', 'B', 'C', 'D', 'E']);
+        // If more than 9 actions, add rows dynamically and fill them
+        if (allActions.length > 9) {
+          for (let i = 9; i < allActions.length; i++) {
+            // Insert new row with formatting from the first action data row
+            const newRowNumber = excelHelper.insertRowWithFormatting(firstActionDataRow, actionRow, ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
             
             // Fill in the action data for the newly inserted row
             const action = allActions[i];
             excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
             actionIdToSymbolNumber.set(action.id, i + 1);
             excelHelper.setCellValue(`B${newRowNumber}`, action.description);
-            excelHelper.setCellValue(`C${newRowNumber}`, formatTime(action.start_time));
-            excelHelper.setCellValue(`D${newRowNumber}`, formatTime(action.end_time));
-            excelHelper.setCellValue(`E${newRowNumber}`, formatDate(action.action_date));
+            excelHelper.setCellValue(`E${newRowNumber}`, formatTime(action.start_time));
+            excelHelper.setCellValue(`F${newRowNumber}`, formatTime(action.end_time));
+            excelHelper.setCellValue(`G${newRowNumber}`, formatDate(action.action_date));
+            
+            // Merge cells B to D for actions
+            excelHelper.forceMergeCells(`B${newRowNumber}:D${newRowNumber}`);
+            
+            // Apply border to G cell
+            excelHelper.applyBorder(`G${newRowNumber}`, {
+              top: { style: 'thin', color: { argb: 'FF000000' } },
+              bottom: { style: 'thin', color: { argb: 'FF000000' } },
+              left: { style: 'thin', color: { argb: 'FF000000' } },
+              right: { style: 'thin', color: { argb: 'FF000000' } }
+            });
             
             // Move to next row for next iteration
             actionRow = newRowNumber + 1;
           }
           
-
+          // Reapply merges to all actions rows (template + dynamic)
+          for (let i = 0; i < allActions.length; i++) {
+            const rowNum = firstActionDataRow + i;
+            excelHelper.forceMergeCells(`B${rowNum}:D${rowNum}`);
+          }
         }
+        
+        // Update the end of actions section
+        actionsEndRow = actionRow - 1;
       }
 
-      // Fill in spare parts (only if spare parts exist)
-      let sparePartRow = 20; // Default to static position
-      let sparePartsExceededLimit = false;
+      // Fill in spare parts (starting from row 33 if no new rows, else 4 rows after last action)
+      let sparePartRow = 33; // Default static position
+      let sparePartsEndRow = 36; // Default end row for spare parts section
       
-             // First, collect all spare parts from all actions (filter out blank/empty spare parts)
-       const allSpareParts = [];
-       for (const finding of findings) {
-         if (finding.actions && Array.isArray(finding.actions)) {
-           for (const action of finding.actions) {
-             if (action && action.id && action.spare_parts && Array.isArray(action.spare_parts)) {
-               for (const sparePart of action.spare_parts) {
-                 if (sparePart && sparePart.id && sparePart.part_name && sparePart.part_name.trim() !== '') {
-                   allSpareParts.push(sparePart);
-                 }
-               }
-             }
-           }
-         }
-       }
+      // First, collect all spare parts from all actions (filter out blank/empty spare parts)
+      const allSpareParts = [];
+      for (const finding of findings) {
+        if (finding.actions && Array.isArray(finding.actions)) {
+          for (const action of finding.actions) {
+            if (action && action.id && action.spare_parts && Array.isArray(action.spare_parts)) {
+              for (const sparePart of action.spare_parts) {
+                if (sparePart && sparePart.id && sparePart.part_name && sparePart.part_name.trim() !== '') {
+                  allSpareParts.push(sparePart);
+                }
+              }
+            }
+          }
+        }
+      }
       
       // Only fill in spare parts if there are any
       if (allSpareParts.length > 0) {
-                 // Determine spare part starting row based on findings and actions status
-         if (!findingsExceededLimit && !actionsExceededLimit && allSpareParts.length <= 4) {
-           // Standard case: everything within limits - use static positioning
-           sparePartRow = 20;
-         } else {
-           // Dynamic case: either findings >3, actions >3, or spare parts >4
-           // Calculate: 20 + extra findings rows + extra actions rows
-           const extraFindingsRows = findings.length > 3 ? findings.length - 3 : 0;
-           const extraActionsRows = allActions.length > 3 ? allActions.length - 3 : 0;
-           sparePartRow = 20 + extraFindingsRows + extraActionsRows;
-         }
+        // Determine spare part starting row based on actual end positions
+        if (findings.length <= 5 && allActions.length <= 9) {
+          // Standard case: no new rows inserted - use static positioning
+          sparePartRow = 33;
+        } else {
+          // Dynamic case: new rows were inserted - start 4 rows after last action
+          sparePartRow = actionsEndRow + 4;
+        }
         
-                 // Track the first spare part data row for copying (BEFORE the loop increments sparePartRow)
-         const firstSparePartDataRow = sparePartRow;
+        // Track the first spare part data row for copying (BEFORE the loop increments sparePartRow)
+        const firstSparePartDataRow = sparePartRow;
         
         // Fill in spare parts (max 4 initially, then add more rows if needed)
         for (let i = 0; i < Math.min(allSpareParts.length, 4); i++) {
           const sparePart = allSpareParts[i];
           excelHelper.setCellValue(`A${sparePartRow}`, i + 1);
           excelHelper.setCellValue(`B${sparePartRow}`, sparePart.part_name);
-          excelHelper.setCellValue(`C${sparePartRow}`, sparePart.part_number);
-                     excelHelper.setCellValue(`D${sparePartRow}`, sparePart.quantity);
-           
-           sparePartRow++;
-         }
-         
-
+          excelHelper.setCellValue(`E${sparePartRow}`, sparePart.part_number);
+          excelHelper.setCellValue(`F${sparePartRow}`, sparePart.quantity);
+          
+          // Merge cells B to D for spare parts
+          excelHelper.forceMergeCells(`B${sparePartRow}:D${sparePartRow}`);
+          
+          // Apply border to G cell
+          excelHelper.applyBorder(`G${sparePartRow}`, {
+            top: { style: 'thin', color: { argb: 'FF000000' } },
+            bottom: { style: 'thin', color: { argb: 'FF000000' } },
+            left: { style: 'thin', color: { argb: 'FF000000' } },
+            right: { style: 'thin', color: { argb: 'FF000000' } }
+          });
+          
+          sparePartRow++;
+        }
 
         // If more than 4 spare parts, add rows dynamically and fill them
         if (allSpareParts.length > 4) {
-          sparePartsExceededLimit = true;
           for (let i = 4; i < allSpareParts.length; i++) {
-            // Copy from the first spare part data row and insert above current spare part row
-            const newRowNumber = excelHelper.copyRowAndInsertAbove(firstSparePartDataRow, sparePartRow, ['A', 'B', 'C', 'D', 'E']);
+            // Insert new row with formatting from the first spare part data row
+            const newRowNumber = excelHelper.insertRowWithFormatting(firstSparePartDataRow, sparePartRow, ['A', 'B', 'C', 'D', 'E', 'F']);
             
             // Fill in the spare part data for the newly inserted row
             const sparePart = allSpareParts[i];
             excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
             excelHelper.setCellValue(`B${newRowNumber}`, sparePart.part_name);
-            excelHelper.setCellValue(`C${newRowNumber}`, sparePart.part_number);
-            excelHelper.setCellValue(`D${newRowNumber}`, sparePart.quantity);
+            excelHelper.setCellValue(`E${newRowNumber}`, sparePart.part_number);
+            excelHelper.setCellValue(`F${newRowNumber}`, sparePart.quantity);
             
-                         // Move to next row for next iteration
-             sparePartRow = newRowNumber + 1;
-           }
-           
+            // Merge cells B to D for spare parts
+            excelHelper.forceMergeCells(`B${newRowNumber}:D${newRowNumber}`);
+            
+            // Move to next row for next iteration
+            sparePartRow = newRowNumber + 1;
+          }
+          
+          // Reapply merges to all spare parts rows (template + dynamic)
+          for (let i = 0; i < allSpareParts.length; i++) {
+            const rowNum = firstSparePartDataRow + i;
+            excelHelper.forceMergeCells(`B${rowNum}:D${rowNum}`);
+          }
+          
+          // Reapply borders to all G cells in spare parts
+          const sparePartsGAddresses = [];
+          for (let i = 0; i < allSpareParts.length; i++) {
+            sparePartsGAddresses.push(`G${firstSparePartDataRow + i}`);
+          }
+          excelHelper.applyBorderToCells(sparePartsGAddresses, {
+            top: { style: 'thin', color: { argb: 'FF000000' } },
+            bottom: { style: 'thin', color: { argb: 'FF000000' } },
+            left: { style: 'thin', color: { argb: 'FF000000' } },
+            right: { style: 'thin', color: { argb: 'FF000000' } }
+          });
+        }
+        
+        // Update the end of spare parts section
+        sparePartsEndRow = sparePartRow - 1;
+      }
 
-         }
-       }
-
-      // Fill in technicians (starting dynamically after spare parts)
-      let technicianRow = 26; // Default to static position
+      // Fill in technicians (starting from row 40 if no new rows, else 4 rows after last spare part)
+      let technicianRow = 40; // Default static position
       const perActionTechRows = techniciansResult.rows as Array<{ name: string; staff_id: string; action_id: number }>; 
+      
       // Aggregate unique technicians and collect action symbol numbers they participated in
       const techKeyToData = new Map<string, { name: string; staff_id: string; symbols: number[] }>();
       for (const row of perActionTechRows) {
@@ -305,6 +383,7 @@ export async function GET(request: NextRequest) {
           if (!entry.symbols.includes(symbol)) entry.symbols.push(symbol);
         }
       }
+      
       // Create final technicians array with sorted unique symbols
       const technicians = Array.from(techKeyToData.values()).map(t => ({
         name: t.name,
@@ -312,61 +391,78 @@ export async function GET(request: NextRequest) {
         symbolsCsv: t.symbols.sort((a, b) => a - b).join(',')
       }));
       
-      // Determine technician starting row based on all previous sections status
-      if (!findingsExceededLimit && !actionsExceededLimit && !sparePartsExceededLimit && technicians.length <= 3) {
-        // Standard case: everything within limits - use static positioning
-        technicianRow = 26;
+      // Determine technician starting row based on actual end positions
+      if (findings.length <= 5 && allActions.length <= 9 && allSpareParts.length <= 4) {
+        // Standard case: no new rows inserted - use static positioning
+        technicianRow = 40;
       } else {
-        // Dynamic case: any section exceeded limits
-        // Calculate: 26 + extra findings rows + extra actions rows + extra spare parts rows
-        const extraFindingsRows = findings.length > 3 ? findings.length - 3 : 0;
-        const extraActionsRows = allActions.length > 3 ? allActions.length - 3 : 0;
-        const extraSparePartsRows = allSpareParts.length > 4 ? allSpareParts.length - 4 : 0;
-        technicianRow = 26 + extraFindingsRows + extraActionsRows + extraSparePartsRows;
+        // Dynamic case: new rows were inserted - start 4 rows after last spare part
+        technicianRow = sparePartsEndRow + 4;
       }
       
-                 // Track the first technician data row for copying (BEFORE the loop increments technicianRow)
-         const firstTechnicianDataRow = technicianRow;
+      // Track the first technician data row for copying (BEFORE the loop increments technicianRow)
+      const firstTechnicianDataRow = technicianRow;
+      
+      // Fill in technicians (max 4 initially, then add more rows if needed)
+      // Only process if there are technicians
+      if (technicians.length > 0) {
+        for (let i = 0; i < Math.min(technicians.length, 4); i++) {
+        const technician = technicians[i];
+        excelHelper.setCellValue(`A${technicianRow}`, i + 1);
+        excelHelper.setCellValue(`B${technicianRow}`, technician.name);
+        // In place of designation, put comma-separated action symbols
+        excelHelper.setCellValue(`E${technicianRow}`, technician.symbolsCsv);
+        excelHelper.setCellValue(`F${technicianRow}`, technician.staff_id);
         
-        // Fill in technicians (max 3 initially, then add more rows if needed)
-        for (let i = 0; i < Math.min(technicians.length, 3); i++) {
-          const technician = technicians[i];
-          excelHelper.setCellValue(`A${technicianRow}`, i + 1);
-          excelHelper.setCellValue(`B${technicianRow}`, technician.name);
-          // In place of designation, put comma-separated action symbols
-          excelHelper.setCellValue(`C${technicianRow}`, technician.symbolsCsv);
-          excelHelper.setCellValue(`D${technicianRow}`, technician.staff_id);
-           
-           technicianRow++;
-         }
-         
+        // Merge cells B to D for technicians
+        excelHelper.forceMergeCells(`B${technicianRow}:D${technicianRow}`);
+        
+        // Apply border to G cell
+        excelHelper.applyBorder(`G${technicianRow}`, {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'thin', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
+        });
+        
+        technicianRow++;
+        }
+      }
 
-
-      // If more than 3 technicians, add rows dynamically and fill them
-      if (technicians.length > 3) {
-        for (let i = 3; i < technicians.length; i++) {
-          // Copy from the first technician data row and insert above current technician row
-          const newRowNumber = excelHelper.copyRowAndInsertAbove(firstTechnicianDataRow, technicianRow, ['A', 'B', 'C', 'D', 'E']);
+      // If more than 4 technicians, add rows dynamically and fill them
+      if (technicians.length > 4) {
+        for (let i = 4; i < technicians.length; i++) {
+          // Insert new row with formatting from the first technician data row
+          const newRowNumber = excelHelper.insertRowWithFormatting(firstTechnicianDataRow, technicianRow, ['A', 'B', 'C', 'D', 'E', 'F']);
           
           // Fill in the technician data for the newly inserted row
           const technician = technicians[i];
           excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
           excelHelper.setCellValue(`B${newRowNumber}`, technician.name);
-          excelHelper.setCellValue(`C${newRowNumber}`, technician.symbolsCsv);
-          excelHelper.setCellValue(`D${newRowNumber}`, technician.staff_id);
+          excelHelper.setCellValue(`E${newRowNumber}`, technician.symbolsCsv);
+          excelHelper.setCellValue(`F${newRowNumber}`, technician.staff_id);
           
-                     // Move to next row for next iteration
-           technicianRow = newRowNumber + 1;
-         }
-         
-
-       }
+          // Merge cells B to D for technicians
+          excelHelper.forceMergeCells(`B${newRowNumber}:D${newRowNumber}`);
+          
+          // Apply border to G cell
+          excelHelper.applyBorder(`G${newRowNumber}`, {
+            top: { style: 'thin', color: { argb: 'FF000000' } },
+            bottom: { style: 'thin', color: { argb: 'FF000000' } },
+            left: { style: 'thin', color: { argb: 'FF000000' } },
+            right: { style: 'thin', color: { argb: 'FF000000' } }
+          });
+          
+          // Move to next row for next iteration
+          technicianRow = newRowNumber + 1;
+        }
+      }
 
       // Generate the Excel buffer
       const buffer = await excelHelper.getBuffer();
 
       // Return the Excel file as a blob response
-      return new NextResponse(new Uint8Array(buffer), {
+      return new NextResponse(buffer as BodyInit, {
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'Content-Disposition': `attachment; filename="WorkOrderReport_${workOrder.work_order_no}_${Date.now()}.xlsx"`

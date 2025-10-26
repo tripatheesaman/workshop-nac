@@ -375,18 +375,15 @@ export default function CreateWorkOrderPage() {
                 required
               >
                 <option value="">Select work type</option>
-                <option value="Maintenance">Maintenance</option>
-                <option value="Repair">Repair</option>
-                <option value="Paint">Paint</option>
-                <option value="Dent">Dent</option>
-                <option value="Wheel">Wheel</option>
-                <option value="Tyre">Tyre</option>
                 <option value="Mechanical">Mechanical</option>
-                <option value="Fabrication">Fabrication</option>
                 <option value="Electrical">Electrical</option>
-                <option value="Battery">Battery</option>
-                <option value="ULD Containers">ULD Containers</option>
-                <option value="Others">Others</option>
+                <option value="Hydraulics">Hydraulics</option>
+                <option value="Schedule Check">Schedule Check</option>
+                <option value="Electrical Repair">Electrical Repair</option>
+                <option value="Painting">Painting</option>
+                <option value="Miscellaneous">Miscellaneous</option>
+                <option value="Customer Request">Customer Request</option>
+                <option value="Other">Other</option>
               </select>
               {errors.work_type && (
                 <p className="mt-1 text-sm text-red-600">{errors.work_type}</p>

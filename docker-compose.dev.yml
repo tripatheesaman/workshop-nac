@@ -4,7 +4,7 @@ services:
   # PostgreSQL Database
   db:
     image: postgres:15-alpine
-    container_name: wks_postgres_dev
+    container_name: mgsem_postgres_dev
     env_file:
       - .env
     environment:
@@ -14,10 +14,10 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - /srv/wks-work-order/postgres-data-dev:/var/lib/postgresql/data
+      - /srv/mgsem-work-order/postgres-data-dev:/var/lib/postgresql/data
       - ./scripts/init-db-simple.js:/docker-entrypoint-initdb.d/init-db-simple.js
     networks:
-      - wks_network_dev
+      - mgsem_network_dev
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s
@@ -29,7 +29,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: wks_app_dev
+    container_name: mgsem_app_dev
     ports:
       - "3002:3000"
     env_file:
@@ -44,13 +44,13 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-      - /srv/wks-work-order/uploads-dev:/app/public/uploads:rw
+      - /srv/mgsem-work-order/uploads-dev:/app/public/uploads:rw
     networks:
-      - wks_network_dev
+      - mgsem_network_dev
     restart: unless-stopped
 
-# Volumes are now mapped to /srv/wks-work-order
+# Volumes are now mapped to /srv/mgsem-work-order
 
 networks:
-  wks_network_dev:
+  mgsem_network_dev:
     driver: bridge 

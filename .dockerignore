@@ -106,4 +106,4 @@ scripts/*
 !scripts/start-dev.sh
 
 # Volume directories (exclude from build context)
-/srv/wks-work-order/ 
+/srv/mgsem-work-order/ 

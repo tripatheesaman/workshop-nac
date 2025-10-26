@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Server Setup Script for WKS Work Order Management System
+# Server Setup Script for MGSEM Work Order Management System
 # Run this on your server to prepare the environment
 
 set -e
 
-echo "🔧 Setting up server for WKS Work Order Management System..."
+echo "🔧 Setting up server for MGSEM Work Order Management System..."
 
 # Update system packages
 echo "📦 Updating system packages..."
@@ -35,13 +35,13 @@ fi
 
 # Create application directory
 echo "📁 Creating application directory..."
-sudo mkdir -p /opt/wks-work-order
-sudo chown $USER:$USER /opt/wks-work-order
+sudo mkdir -p /opt/mgsem-work-order
+sudo chown $USER:$USER /opt/mgsem-work-order
 
 echo "✅ Server setup completed!"
 echo ""
 echo "📋 Next steps:"
-echo "1. Clone your repository to /opt/wks-work-order"
+echo "1. Clone your repository to /opt/mgsem-work-order"
 echo "2. Copy your .env file"
 echo "3. Run: npm run setup-volumes"
 echo "4. Run: npm run deploy"
