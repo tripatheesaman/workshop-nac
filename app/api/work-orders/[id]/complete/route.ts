@@ -91,6 +91,57 @@ export async function PUT(
         }
       }
 
+        // Ensure all actions have their latest date marked completed
+        const incompleteActions = await client.query(`
+          SELECT a.id, a.description
+          FROM actions a
+          JOIN findings f ON f.id = a.finding_id
+          LEFT JOIN LATERAL (
+            SELECT ad.is_completed
+            FROM action_dates ad
+            WHERE ad.action_id = a.id
+            ORDER BY (ad.action_date::date) DESC
+            LIMIT 1
+          ) latest ON true
+          WHERE f.work_order_id = $1 AND (latest.is_completed IS DISTINCT FROM TRUE)
+        `, [workOrderId]);
+
+        if (incompleteActions.rows.length > 0) {
+          // Return structured data to help the frontend show friendly messages
+          return NextResponse.json<ApiResponse<unknown>>({
+            success: false,
+            error: 'All actions must be completed before requesting completion',
+            data: { incomplete_actions: incompleteActions.rows }
+          }, { status: 400 });
+        }
+
+        // Ensure all action_dates have end_time filled
+        // end_time may be stored as time type; cast to text before trimming to avoid btrim/trim errors
+        const missingEndTimes = await client.query(`
+          SELECT COUNT(*) as cnt
+          FROM action_dates ad
+          JOIN actions a ON a.id = ad.action_id
+          JOIN findings f ON f.id = a.finding_id
+          WHERE f.work_order_id = $1 AND (ad.end_time IS NULL OR trim(ad.end_time::text) = '')
+        `, [workOrderId]);
+
+        if (parseInt(missingEndTimes.rows[0].cnt, 10) > 0) {
+          // Also return the specific action_dates missing end_time
+          const missingRows = await client.query(`
+            SELECT ad.id as action_date_id, a.id as action_id, ad.action_date
+            FROM action_dates ad
+            JOIN actions a ON a.id = ad.action_id
+            JOIN findings f ON f.id = a.finding_id
+            WHERE f.work_order_id = $1 AND (ad.end_time IS NULL OR trim(ad.end_time::text) = '')
+          `, [workOrderId]);
+
+          return NextResponse.json<ApiResponse<unknown>>({
+            success: false,
+            error: 'All action end times must be filled before requesting completion',
+            data: { missing_end_times: missingRows.rows }
+          }, { status: 400 });
+        }
+
       const result = await client.query(`
         UPDATE work_orders 
         SET 

@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Notification } from '../types';
 import { apiClient } from '../utils/api';
 
 export const NotificationBell: React.FC = () => {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -110,7 +112,14 @@ export const NotificationBell: React.FC = () => {
                         ? 'bg-gray-50 hover:bg-gray-100' 
                         : 'bg-blue-50 hover:bg-blue-100'
                     }`}
-                    onClick={() => markAsRead(notification.id)}
+                    onClick={() => {
+                      markAsRead(notification.id);
+                      // Navigate to work order if it has a related entity
+                      if (notification.related_entity_id && notification.related_entity_type === 'work_order') {
+                        router.push(`/work-orders/${notification.related_entity_id}`);
+                        setShowDropdown(false);
+                      }
+                    }}
                   >
                     <div className="flex items-start space-x-3">
                       <span className="text-lg">{getNotificationIcon(notification.type)}</span>

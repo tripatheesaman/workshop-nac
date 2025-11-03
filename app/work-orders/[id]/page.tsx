@@ -9,9 +9,10 @@ import { Input } from '../../components/Input';
 import { Card } from '../../components/Card';
 import { apiClient } from '../../utils/api';
 import { useToast } from '../../components/ToastContext';
-import { validateAction, validateSparePart, validateFinding, validateActionDate, validateCompletionDate } from '../../utils/validation';
-import { WorkOrder, Finding, Action, SparePart, Technician, ActionTechnician } from '../../types';
+import { validateAction, validateSparePart, validateFinding, validateCompletionDate } from '../../utils/validation';
+import { WorkOrder, Finding, Action, SparePart, Technician, ActionTechnician, ActionDate, Unit } from '../../types';
 import { ConfirmationModal } from '../../components/ConfirmationModal';
+import { WORK_TYPES } from '../../utils/workTypes';
 
 // Helper to normalize a timestamp or time string to HH:MM for <input type="time">
 function toTimeHHMM(value: string): string {
@@ -26,6 +27,8 @@ function toTimeHHMM(value: string): string {
   if (parts.length > 1 && /\d{2}:\d{2}/.test(parts[1])) return parts[1].slice(0,5);
   return '';
 }
+
+// NOTE: addOneDay helper removed — unused
 
 interface WorkOrderDetail extends WorkOrder {
   status: 'pending' | 'ongoing' | 'completion_requested' | 'completed' | 'rejected';
@@ -54,12 +57,15 @@ interface NewAction {
   action_date: string;
   start_time: string;
   end_time?: string;
+  is_completed?: boolean;
+  remarks?: string;
 }
 
 interface NewSparePart {
   part_name: string;
   part_number: string;
   quantity: number;
+  unit?: string;
 }
 
 export default function WorkOrderDetailPage() {
@@ -76,9 +82,14 @@ export default function WorkOrderDetailPage() {
     work_type_other: '',
     requested_by: '',
     km_hrs: 0,
+    work_order_date: '',
   });
+  // Add new states for admin/superadmin editing
+  const [isEditingWorkOrder, setIsEditingWorkOrder] = useState(false);
+  const [isApprovingWorkOrder, setIsApprovingWorkOrder] = useState(false);
+  
   const [technicians, setTechnicians] = useState<Technician[]>([]);
-  const [showAddFinding, setShowAddFinding] = useState(false);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [newFinding, setNewFinding] = useState<NewFinding>({ description: '' });
   const [selectedFindingForAction, setSelectedFindingForAction] = useState<number | null>(null);
   const [selectedActionForSparePart, setSelectedActionForSparePart] = useState<number | null>(null);
@@ -86,23 +97,45 @@ export default function WorkOrderDetailPage() {
   const [editingAction, setEditingAction] = useState<number | null>(null);
   const [editingSparePart, setEditingSparePart] = useState<number | null>(null);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [showCompletionIssuesModal, setShowCompletionIssuesModal] = useState(false);
+  const [completionIssuesMessage, setCompletionIssuesMessage] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [showReferenceImageModal, setShowReferenceImageModal] = useState(false);
   const [referenceImageFile, setReferenceImageFile] = useState<File | null>(null);
   const [isUploadingReferenceImage, setIsUploadingReferenceImage] = useState(false);
   const [completionDate, setCompletionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showStartAgainModal, setShowStartAgainModal] = useState(false);
+  const [selectedActionForStartAgain, setSelectedActionForStartAgain] = useState<number | null>(null);
+  const [startAgainData, setStartAgainData] = useState({
+    action_date: new Date().toISOString().split('T')[0],
+    start_time: '',
+    end_time: '',
+    technician_ids: [] as number[]
+  });
+  const [actionDates, setActionDates] = useState<{ [actionId: number]: ActionDate[] }>({});
+  const [editingActionDate, setEditingActionDate] = useState<number | null>(null);
+  const [editActionDateData, setEditActionDateData] = useState({
+    action_date: '',
+    start_time: '',
+    end_time: '',
+    is_completed: false,
+    technician_ids: [] as number[]
+  });
   const [newAction, setNewAction] = useState<NewAction>({
     description: '',
     action_date: new Date().toISOString().split('T')[0],
     start_time: '',
-    end_time: ''
+    end_time: '',
+    is_completed: false
   });
   const [newActionTechnicianIds, setNewActionTechnicianIds] = useState<number[]>([]);
+  const [addFindingFor, setAddFindingFor] = useState<number | null>(null);
   const [newSparePart, setNewSparePart] = useState<NewSparePart>({
     part_name: '',
     part_number: '',
-    quantity: 1
+    quantity: 1,
+    unit: ''
   });
   const [editFinding, setEditFinding] = useState<NewFinding>({ description: '' });
   const [editAction, setEditAction] = useState<NewAction>({
@@ -114,7 +147,8 @@ export default function WorkOrderDetailPage() {
   const [editSparePart, setEditSparePart] = useState<NewSparePart>({
     part_name: '',
     part_number: '',
-    quantity: 1
+    quantity: 1,
+    unit: ''
   });
 
   // Confirmation modal states
@@ -130,6 +164,8 @@ export default function WorkOrderDetailPage() {
       try {
         const res = await apiClient.get<Technician[]>('/technicians');
         if (res.success && res.data) setTechnicians(res.data);
+        const ures = await apiClient.get<Unit[]>('/units');
+        if (ures.success && ures.data) setUnits(ures.data);
       } catch {
         // ignore
       }
@@ -170,7 +206,23 @@ export default function WorkOrderDetailPage() {
           work_type_other: '',
           requested_by: workOrderWithArrays.requested_by,
           km_hrs: workOrderWithArrays.km_hrs || 0,
+          work_order_date: workOrderWithArrays.work_order_date,
         });
+
+        // Preload action dates for each action so UI has the per-action dates available immediately
+        (async () => {
+          try {
+            const actionIds: number[] = [];
+            for (const f of workOrderWithArrays.findings) {
+              for (const a of f.actions) {
+                if (a && a.id) actionIds.push(a.id);
+              }
+            }
+            await Promise.all(actionIds.map(id => fetchActionDates(id)));
+          } catch {
+            // ignore
+          }
+        })();
       }
     } catch (error) {
       console.error('Error fetching work order details:', error);
@@ -186,6 +238,19 @@ export default function WorkOrderDetailPage() {
       fetchWorkOrderDetails();
     }
   }, [workOrderId, fetchWorkOrderDetails]);
+
+  // Fetch action dates when work order changes
+  useEffect(() => {
+    if (workOrder && workOrder.findings) {
+      workOrder.findings.forEach(finding => {
+        if (finding.actions) {
+          finding.actions.forEach(action => {
+            fetchActionDates(action.id);
+          });
+        }
+      });
+    }
+  }, [workOrder]);
 
   const handleAddFinding = async () => {
     try {
@@ -229,13 +294,163 @@ export default function WorkOrderDetailPage() {
       
       if (response.success) {
         setNewFinding({ description: '' });
-        setShowAddFinding(false);
         fetchWorkOrderDetails();
         toast.showSuccess('Finding added successfully');
       }
     } catch (error) {
       console.error('Error adding finding:', error);
       toast.showError('Error adding finding');
+    }
+  };
+
+  const fetchActionDates = async (actionId: number) => {
+    try {
+      const response = await apiClient.get(`/actions/${actionId}/dates`);
+      if (response.success && response.data) {
+        setActionDates(prev => ({
+          ...prev,
+          [actionId]: response.data as ActionDate[]
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching action dates:', error);
+    }
+  };
+
+  const handleStartAgain = async () => {
+    if (!selectedActionForStartAgain) return;
+    
+    try {
+      const response = await apiClient.post(`/actions/${selectedActionForStartAgain}/dates`, {
+        action_date: startAgainData.action_date,
+        start_time: startAgainData.start_time,
+        end_time: startAgainData.end_time,
+        is_completed: false
+      });
+      if (!response.success) {
+        // If server provided a previous_action_date detail, show a specific message
+        if (response.data) {
+          const respData = response.data as unknown as { previous_action_date?: { action_date?: string } };
+          const prev = respData.previous_action_date;
+          if (prev) {
+            const prevDate = prev.action_date ? new Date(prev.action_date).toLocaleDateString('en-GB') : String(prev.action_date);
+            if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            toast.showError('Cannot start again', `Please enter an end time for the previous action date (${prevDate}) before starting again.`);
+            return;
+          }
+        }
+
+        // Show server-provided error to the user (e.g., duplicate date)
+        toast.showError('Error adding action date', response.error || response.message || 'Failed to add action date');
+        return;
+      }
+
+      if (response.success) {
+        // Assign selected technicians to this action
+        if (startAgainData.technician_ids.length > 0) {
+          for (const techId of startAgainData.technician_ids) {
+            try {
+              await apiClient.post(`/actions/${selectedActionForStartAgain}/technicians`, { technician_id: techId });
+            } catch {}
+          }
+        }
+        
+        setShowStartAgainModal(false);
+        setSelectedActionForStartAgain(null);
+        setStartAgainData({
+          action_date: new Date().toISOString().split('T')[0],
+          start_time: '',
+          end_time: '',
+          technician_ids: []
+        });
+        fetchWorkOrderDetails();
+        fetchActionDates(selectedActionForStartAgain);
+        toast.showSuccess('Action date added successfully');
+      }
+    } catch (error) {
+      console.error('Error adding action date:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Error adding action date';
+      if (errorMessage.includes('already exists') || errorMessage.includes('duplicate') || errorMessage.includes('unique')) {
+        toast.showError('This date already exists for this action. Please choose a different date.');
+      } else {
+        toast.showError(errorMessage);
+      }
+    }
+  };
+
+  const handleEditActionDate = async (actionId: number) => {
+    if (!editingActionDate) return;
+    try {
+      const response = await apiClient.put(`/actions/${actionId}/dates/${editingActionDate}`, {
+        action_date: editActionDateData.action_date,
+        start_time: editActionDateData.start_time,
+        end_time: editActionDateData.end_time || null,
+        is_completed: editActionDateData.is_completed
+      });
+      
+      if (response.success) {
+        setEditingActionDate(null);
+        setEditActionDateData({
+          action_date: '',
+          start_time: '',
+          end_time: '',
+          is_completed: false,
+          technician_ids: []
+        });
+        fetchWorkOrderDetails();
+        fetchActionDates(actionId);
+        toast.showSuccess('Action date updated successfully');
+      } else {
+        toast.showError('Error updating action date', response.error);
+      }
+    } catch (error) {
+      console.error('Error updating action date:', error);
+      toast.showError('Error updating action date');
+    }
+  };
+
+  const handleCompleteAction = async (actionId: number, actionDateId: number) => {
+    try {
+      const response = await apiClient.put(`/actions/${actionId}/dates/${actionDateId}`, { is_completed: true });
+      if (response.success) {
+        fetchWorkOrderDetails();
+        fetchActionDates(actionId);
+        toast.showSuccess('Action marked as completed');
+      } else {
+        toast.showError('Error', response.error || 'Failed to complete action');
+      }
+    } catch (error) {
+      console.error('Error completing action date:', error);
+      toast.showError('Error completing action date');
+    }
+  };
+
+  const handleRevertAction = async (actionId: number, actionDateId: number) => {
+    try {
+      const response = await apiClient.put(`/actions/${actionId}/dates/${actionDateId}`, { is_completed: false });
+      if (response.success) {
+        fetchWorkOrderDetails();
+        fetchActionDates(actionId);
+        toast.showSuccess('Action completion reverted');
+      } else {
+        toast.showError('Error', response.error || 'Failed to revert completion');
+      }
+    } catch (error) {
+      console.error('Error reverting action date completion:', error);
+      toast.showError('Error reverting action date completion');
+    }
+  };
+
+  const handleDeleteActionDate = async (actionId: number, actionDateId: number) => {
+    try {
+      const response = await apiClient.delete(`/actions/${actionId}/dates/${actionDateId}`);
+      if (response.success) {
+        fetchActionDates(actionId);
+        toast.showSuccess('Action date deleted successfully');
+      }
+    } catch (error) {
+      console.error('Error deleting action date:', error);
+      toast.showError('Error deleting action date');
     }
   };
 
@@ -252,35 +467,16 @@ export default function WorkOrderDetailPage() {
         return;
       }
 
-      // Get all existing actions for this finding to find the latest action date
-      const finding = workOrder.findings.find(f => f.id === findingId);
-      const existingActions = finding?.actions || [];
-      const latestActionDate = existingActions.length > 0 
-        ? Math.max(...existingActions.map(a => new Date(a.action_date).getTime()))
-        : null;
-      
-      const previousActionDate = latestActionDate 
-        ? new Date(latestActionDate).toISOString().split('T')[0]
-        : undefined;
-
-      // Validate action date
-      const dateValidation = validateActionDate(
-        newAction.action_date,
-        workOrder.work_order_date,
-        previousActionDate
-      );
-      
-      if (dateValidation) {
-        toast.showError('Validation Error', dateValidation.message);
-        return;
-      }
+      // Date validation intentionally skipped for actions (user requested no date validation)
 
       const response = await apiClient.post<Action>('/actions', {
         finding_id: findingId,
         description: newAction.description,
         action_date: newAction.action_date,
         start_time: newAction.start_time,
-        end_time: newAction.end_time
+        end_time: newAction.end_time,
+        is_completed: newAction.is_completed,
+        remarks: newAction.remarks || null
       });
       
       if (response.success) {
@@ -297,7 +493,9 @@ export default function WorkOrderDetailPage() {
           description: '',
           action_date: new Date().toISOString().split('T')[0],
           start_time: '',
-          end_time: ''
+          end_time: '',
+          is_completed: false,
+          remarks: ''
         });
         setNewActionTechnicianIds([]);
         setSelectedFindingForAction(null);
@@ -322,14 +520,16 @@ export default function WorkOrderDetailPage() {
         action_id: actionId,
         part_name: newSparePart.part_name,
         part_number: newSparePart.part_number,
-        quantity: newSparePart.quantity
+        quantity: newSparePart.quantity,
+        unit: newSparePart.unit
       });
       
       if (response.success) {
         setNewSparePart({
           part_name: '',
           part_number: '',
-          quantity: 1
+          quantity: 1,
+          unit: ''
         });
         setSelectedActionForSparePart(null);
         fetchWorkOrderDetails();
@@ -425,35 +625,14 @@ export default function WorkOrderDetailPage() {
         return;
       }
 
-      // Get all actions for this finding except the current one
-      const otherActions = finding.actions.filter(a => a.id !== actionId);
-      
-      // Find the latest action date before the current action
-      const latestActionDate = otherActions.length > 0 
-        ? Math.max(...otherActions.map(a => new Date(a.action_date).getTime()))
-        : null;
-      
-      const previousActionDate = latestActionDate 
-        ? new Date(latestActionDate).toISOString().split('T')[0]
-        : undefined;
-
-      // Validate action date
-      const dateValidation = validateActionDate(
-        editAction.action_date,
-        workOrder.work_order_date,
-        previousActionDate
-      );
-      
-      if (dateValidation) {
-        toast.showError('Validation Error', dateValidation.message);
-        return;
-      }
+  // Previous latest-action-date checks removed (client-side date validation disabled)
 
       const response = await apiClient.put<Action>(`/actions/${actionId}`, {
         description: editAction.description,
         action_date: editAction.action_date,
         start_time: editAction.start_time,
-        end_time: editAction.end_time
+        end_time: editAction.end_time,
+        remarks: editAction.remarks || null
       });
       
       if (response.success) {
@@ -461,7 +640,8 @@ export default function WorkOrderDetailPage() {
           description: '',
           action_date: new Date().toISOString().split('T')[0],
           start_time: '',
-          end_time: ''
+          end_time: '',
+          remarks: ''
         });
         setEditingAction(null);
         fetchWorkOrderDetails();
@@ -508,14 +688,16 @@ export default function WorkOrderDetailPage() {
       const response = await apiClient.put<SparePart>(`/spare-parts/${sparePartId}`, {
         part_name: editSparePart.part_name,
         part_number: editSparePart.part_number,
-        quantity: editSparePart.quantity
+        quantity: editSparePart.quantity,
+        unit: editSparePart.unit
       });
       
       if (response.success) {
         setEditSparePart({
           part_name: '',
           part_number: '',
-          quantity: 1
+          quantity: 1,
+          unit: ''
         });
         setEditingSparePart(null);
         fetchWorkOrderDetails();
@@ -566,8 +748,17 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
-    // Ensure all actions across findings have end_time filled; if any missing, show error and stop.
-    const hasMissingEndTimes = workOrder.findings.some(f => (f.actions || []).some(a => !a.end_time));
+    // Ensure all actions across findings have end_time filled for their latest action_date; if any missing, show error and stop.
+    const hasMissingEndTimes = workOrder.findings.some(f => (f.actions || []).some(a => {
+      const datesForAction = actionDates[a.id] || [];
+      if (datesForAction && datesForAction.length > 0) {
+        // find latest by date
+        const latest = [...datesForAction].sort((x, y) => new Date(y.action_date).getTime() - new Date(x.action_date).getTime())[0];
+        return !latest.end_time || String(latest.end_time).trim() === '';
+      }
+      // fallback to action.end_time if we don't have dates loaded
+      return !a.end_time || String(a.end_time).trim() === '';
+    }));
     if (hasMissingEndTimes) {
       toast.showError('Validation Error', 'Please fill end times for all actions before requesting completion');
       return;
@@ -610,6 +801,32 @@ export default function WorkOrderDetailPage() {
         setShowCompleteModal(false);
         fetchWorkOrderDetails();
         toast.showSuccess('Completion request submitted successfully');
+        return;
+      }
+
+      // If server returned structured validation errors, show a friendly modal with details
+      if (!response.success && response.data) {
+        const parts: string[] = [];
+        const respData = response.data as unknown as { incomplete_actions?: Array<{ id: number; description?: string }>; missing_end_times?: Array<{ action_id: number; action_date: string }>; };
+        if (respData.incomplete_actions && Array.isArray(respData.incomplete_actions)) {
+          parts.push('Incomplete actions:\n' + respData.incomplete_actions.map(a => `#${a.id} ${a.description || ''}`).join('\n'));
+        }
+        if (respData.missing_end_times && Array.isArray(respData.missing_end_times)) {
+          parts.push('Action dates missing end time:\n' + respData.missing_end_times.map(r => `action_id=#${r.action_id} date=${new Date(r.action_date).toLocaleDateString('en-GB')}`).join('\n'));
+        }
+        const message = parts.length > 0 ? parts.join('\n\n') : (response.error || 'Unable to submit completion request');
+        setCompletionIssuesMessage(message);
+        // Close any native date/time picker that might be open so the modal/toast is visible
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        setShowCompletionIssuesModal(true);
+        return;
+      }
+
+      // If server returned a generic failure (no structured data), show an error toast so user isn't left wondering
+      if (!response.success) {
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        toast.showError('Error submitting completion request', response.error || 'Unable to submit completion request');
+        return;
       }
     } catch (error) {
       console.error('Error submitting completion request:', error);
@@ -627,9 +844,32 @@ export default function WorkOrderDetailPage() {
         setShowCompleteModal(false);
         fetchWorkOrderDetails();
         toast.showSuccess('Completion request approved successfully');
+        return;
+      }
+
+      // If server returned structured validation data (e.g., missing end times), show it to the user
+      if (!response.success && response.data) {
+        const parts: string[] = [];
+        const respData = response.data as unknown as { missing_end_times?: Array<{ action_id: number; action_date: string }>; };
+        if (respData.missing_end_times && Array.isArray(respData.missing_end_times)) {
+          parts.push('Action dates missing end time:\n' + respData.missing_end_times.map(r => `action_id=#${r.action_id} date=${new Date(r.action_date).toLocaleDateString('en-GB')}`).join('\n'));
+        }
+        const message = parts.length > 0 ? parts.join('\n\n') : (response.error || 'Unable to approve completion');
+        setCompletionIssuesMessage(message);
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        setShowCompletionIssuesModal(true);
+        return;
+      }
+
+      // Generic failure: show toast so user isn't left wondering
+      if (!response.success) {
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        toast.showError('Error approving completion', response.error || 'Unable to approve completion');
+        return;
       }
     } catch (error) {
       console.error('Error approving completion:', error);
+      if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
       toast.showError('Error approving completion');
     }
   };
@@ -787,6 +1027,28 @@ export default function WorkOrderDetailPage() {
 
   return (
     <div className="space-y-6">
+      {/* Rejection Banner */}
+      {workOrder.status === 'rejected' && workOrder.rejection_reason && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <span className="text-2xl">❌</span>
+            </div>
+            <div className="ml-3 flex-1">
+              <h3 className="text-lg font-semibold text-red-800">Work Order Rejected</h3>
+              <p className="mt-1 text-sm text-red-700">
+                <span className="font-medium">Reason:</span> {workOrder.rejection_reason}
+              </p>
+              {canEditRejected && (
+                <p className="mt-2 text-sm text-red-800">
+                  Please review the rejection reason, make necessary edits below, and click the &quot;Edit &amp; Resubmit&quot; button to resubmit this work order.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -797,12 +1059,29 @@ export default function WorkOrderDetailPage() {
         <div className="flex space-x-3">
           {workOrder.status === 'pending' && user && (user.role === 'admin' || user.role === 'superadmin') && (
             <>
-              <Button variant="primary" onClick={handleApproveWorkOrder}>
-                ✅ Approve Work Order
-              </Button>
-              <Button variant="outline" onClick={() => setShowRejectModal(true)}>
-                ❌ Reject Work Order
-              </Button>
+              {!isApprovingWorkOrder && !isEditingWorkOrder && (
+                <>
+                  <Button variant="primary" onClick={() => setIsApprovingWorkOrder(true)}>
+                    ✏️ Edit & Approve Work Order
+                  </Button>
+                  <Button variant="primary" onClick={handleApproveWorkOrder}>
+                    ✅ Approve Without Editing
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowRejectModal(true)}>
+                    ❌ Reject Work Order
+                  </Button>
+                </>
+              )}
+            </>
+          )}
+          {/* Superadmin edit button for ongoing and completed */}
+          {(user?.role === 'superadmin' && (workOrder.status === 'ongoing' || workOrder.status === 'completed')) && (
+            <>
+              {!isEditingWorkOrder && (
+                <Button variant="primary" onClick={() => setIsEditingWorkOrder(true)}>
+                  ✏️ Edit Work Order
+                </Button>
+              )}
             </>
           )}
           {workOrder.status === 'ongoing' && (
@@ -851,6 +1130,7 @@ export default function WorkOrderDetailPage() {
                       work_type: finalWorkType,
                       requested_by: editCore.requested_by,
                       km_hrs: editCore.km_hrs,
+                      work_order_date: editCore.work_order_date,
                     });
                     if (!saveRes.success) {
                       toast.showError('Failed to save changes', saveRes.error);
@@ -877,6 +1157,86 @@ export default function WorkOrderDetailPage() {
               </Button>
             </>
           )}
+          {/* Admin/Superadmin edit save/cancel buttons */}
+          {(isEditingWorkOrder || isApprovingWorkOrder) && (
+            <>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  try {
+                    // Validate that work_type_other is provided when "Others" is selected
+                    if (editCore.work_type === 'Others' && (!editCore.work_type_other || editCore.work_type_other.trim() === '')) {
+                      toast.showError('Validation Error', 'Please specify the work type when selecting "Others"');
+                      return;
+                    }
+
+                    // Determine the final work_type value with proper case formatting
+                    let finalWorkType = editCore.work_type;
+                    if (editCore.work_type === 'Others' && editCore.work_type_other) {
+                      // Convert to proper case (first letter of each word capitalized)
+                      finalWorkType = editCore.work_type_other
+                        .toLowerCase()
+                        .split(' ')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+                    }
+
+                    // Save the edits
+                    const saveRes = await apiClient.put<WorkOrder>(`/work-orders/${workOrderId}`, {
+                      equipment_number: editCore.equipment_number,
+                      work_type: finalWorkType,
+                      requested_by: editCore.requested_by,
+                      km_hrs: editCore.km_hrs,
+                      work_order_date: editCore.work_order_date,
+                    });
+                    
+                    if (!saveRes.success) {
+                      toast.showError('Failed to save changes', saveRes.error);
+                      return;
+                    }
+
+                    // If approving, approve the work order
+                    if (isApprovingWorkOrder) {
+                      const approveRes = await apiClient.put(`/work-orders/${workOrderId}/approve`);
+                      if (approveRes.success) {
+                        toast.showSuccess('Work order edited and approved successfully');
+                        setIsApprovingWorkOrder(false);
+                        await fetchWorkOrderDetails();
+                      } else {
+                        toast.showError('Failed to approve work order', approveRes.error);
+                      }
+                    } else {
+                      toast.showSuccess('Work order updated successfully');
+                      setIsEditingWorkOrder(false);
+                      await fetchWorkOrderDetails();
+                    }
+                  } catch {
+                    toast.showError('Error', 'Could not save changes');
+                  }
+                }}
+              >
+                {isApprovingWorkOrder ? '✅ Save & Approve' : '✅ Save Changes'}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setIsEditingWorkOrder(false);
+                  setIsApprovingWorkOrder(false);
+                  // Reset editCore to original values
+                  setEditCore({
+                    equipment_number: workOrder.equipment_number,
+                    work_type: workOrder.work_type,
+                    work_type_other: '',
+                    requested_by: workOrder.requested_by,
+                    km_hrs: workOrder.km_hrs || 0,
+                    work_order_date: workOrder.work_order_date,
+                  });
+                }}
+              >
+                Cancel
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -886,7 +1246,7 @@ export default function WorkOrderDetailPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <span className="font-medium text-gray-700">Equipment:</span>
-            {canEditRejected && isEditingRejected ? (
+            {(canEditRejected && isEditingRejected) || isEditingWorkOrder || isApprovingWorkOrder ? (
               <Input
                 label=""
                 value={editCore.equipment_number}
@@ -899,7 +1259,7 @@ export default function WorkOrderDetailPage() {
           </div>
           <div>
             <span className="font-medium text-gray-700">Work Type:</span>
-            {canEditRejected && isEditingRejected ? (
+            {(canEditRejected && isEditingRejected) || isEditingWorkOrder || isApprovingWorkOrder ? (
               <div>
                 <select
                   value={editCore.work_type}
@@ -910,15 +1270,10 @@ export default function WorkOrderDetailPage() {
                   }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[#08398F] focus:border-[#08398F]"
                 >
-                  <option value="">Select work type</option>
-                  <option value="Maintenance">Maintenance</option>
-                  <option value="Repair">Repair</option>
-                  <option value="Paint">Paint</option>
-                  <option value="Wheel">Wheel</option>
-                  <option value="Mechanical">Mechanical</option>
-                  <option value="Fabrication">Fabrication</option>
-                  <option value="Electrical">Electrical</option>
-                  <option value="Others">Others</option>
+                <option value="">Select work type</option>
+                {WORK_TYPES.map((type) => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
                 </select>
                 {editCore.work_type === 'Others' && (
               <Input
@@ -936,7 +1291,7 @@ export default function WorkOrderDetailPage() {
           </div>
           <div>
             <span className="font-medium text-gray-700">Requested By:</span>
-            {canEditRejected && isEditingRejected ? (
+            {(canEditRejected && isEditingRejected) || isEditingWorkOrder || isApprovingWorkOrder ? (
               <Input
                 label=""
                 value={editCore.requested_by}
@@ -949,7 +1304,7 @@ export default function WorkOrderDetailPage() {
           </div>
           <div>
             <span className="font-medium text-gray-700">KM/Hrs:</span>
-            {canEditRejected && isEditingRejected ? (
+            {(canEditRejected && isEditingRejected) || isEditingWorkOrder || isApprovingWorkOrder ? (
               <Input
                 label=""
                 type="number"
@@ -967,9 +1322,18 @@ export default function WorkOrderDetailPage() {
           </div>
           <div>
             <span className="font-medium text-gray-700">Order Date:</span>
-            <p className="text-gray-900">
-              {new Date(workOrder.work_order_date).toLocaleDateString('en-GB')}
-            </p>
+            {(canEditRejected && isEditingRejected) || isEditingWorkOrder || isApprovingWorkOrder ? (
+              <Input
+                label=""
+                type="date"
+                value={editCore.work_order_date}
+                onChange={(e) => setEditCore(prev => ({ ...prev, work_order_date: e.target.value }))}
+              />
+            ) : (
+              <p className="text-gray-900">
+                {new Date(workOrder.work_order_date).toLocaleDateString('en-GB')}
+              </p>
+            )}
           </div>
           <div>
             <span className="font-medium text-gray-700">Description:</span>
@@ -1111,56 +1475,57 @@ export default function WorkOrderDetailPage() {
       <Card>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-900">Findings</h2>
-          {(workOrder.status !== 'completed' && workOrder.status !== 'completion_requested') && (
-            <Button onClick={() => setShowAddFinding(true)}>
-              ➕ Add Finding
-            </Button>
-          )}
         </div>
 
-        {/* Add New Finding Form */}
-        {showAddFinding && (
-          <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <h3 className="font-medium text-blue-900 mb-3">Add New Finding</h3>
-            <Input
-              label="Finding Description"
-              value={newFinding.description}
-              onChange={(e) => setNewFinding(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="Describe the finding or defect..."
-            />
-            <div className="flex space-x-3 mt-3">
-              <Button size="sm" onClick={handleAddFinding}>
-                Add Finding
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => {
-                setShowAddFinding(false);
-                setNewFinding({ description: '' });
-              }}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
+        {/* Top add finding removed; moved to bottom for locality */}
 
         {/* Existing Findings */}
         {(workOrder.findings || []).length === 0 ? (
-          <p className="text-gray-500 text-center py-4">No findings added yet.</p>
+          <div className="space-y-4">
+            {(workOrder.status !== 'completed' && workOrder.status !== 'completion_requested') && (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="p-3 bg-white rounded border">
+                  <div className="flex items-end gap-2">
+                    <Button size="sm" onClick={() => setAddFindingFor(-1)}>
+                      {addFindingFor === -1 ? '✖️ Close Add Finding' : '➕ Add Finding'}
+                    </Button>
+                  </div>
+                </div>
+                {addFindingFor === -1 && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                    <h5 className="font-medium text-blue-900 mb-2">Add Finding</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                      <div className="md:col-span-3">
+                        <Input
+                          label="Finding Description"
+                          value={newFinding.description}
+                          onChange={(e) => setNewFinding(prev => ({ ...prev, description: e.target.value }))}
+                          placeholder="Describe the finding or defect..."
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button className="w-full" onClick={async () => { await handleAddFinding(); setAddFindingFor(null); }}>
+                          ➕ Add Finding
+                        </Button>
+                        <Button variant="outline" onClick={() => { setAddFindingFor(null); setNewFinding({ description: '' }); }}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <div className="space-y-4">
-            {(workOrder.findings || []).map((finding) => (
+            {[...(workOrder.findings || [])].reverse().map((finding) => (
               <div key={finding.id} className="p-4 bg-gray-50 rounded-lg">
                 <div className="flex justify-between items-start mb-3">
                   <h4 className="font-medium text-gray-900">{finding.description}</h4>
                   <div className="flex space-x-2">
                     {(workOrder.status !== 'completed' && workOrder.status !== 'completion_requested') && (
                       <>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => setSelectedFindingForAction(finding.id)}
-                        >
-                          ➕ Add Action
-                        </Button>
                         <Button 
                           size="sm" 
                           variant="outline"
@@ -1220,25 +1585,34 @@ export default function WorkOrderDetailPage() {
                     <div key={action.id} className="p-3 bg-white rounded border">
                       <div className="flex justify-between items-start mb-2">
                         <h5 className="font-medium text-gray-800">{action.description}</h5>
+                        {action.remarks && (
+                          <div className="text-sm text-gray-700 mt-1">
+                            <strong>Remarks:</strong> {action.remarks}
+                          </div>
+                        )}
                         <div className="flex space-x-2">
                           {workOrder.status !== 'completed' && (
                             <>
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => setSelectedActionForSparePart(action.id)}
-                              >
-                                ➕ Add Spare Part
-                              </Button>
+                              {/* Removed redundant Start Again, users should use Add Date */}
                               <Button 
                                 size="sm" 
                                 variant="outline"
                                 onClick={() => {
+                                  const raw = (action.action_date || '').toString();
+                                  let normalized = '';
+                                  if (raw) {
+                                    const d = new Date(raw);
+                                    const y = d.getFullYear();
+                                    const m = String(d.getMonth() + 1).padStart(2, '0');
+                                    const da = String(d.getDate()).padStart(2, '0');
+                                    normalized = `${y}-${m}-${da}`;
+                                  }
                                   setEditAction({
                                     description: action.description,
-                                    action_date: action.action_date,
+                                    action_date: normalized,
                                     start_time: toTimeHHMM(action.start_time),
-                                    end_time: toTimeHHMM(action.end_time as unknown as string)
+                                    end_time: toTimeHHMM(action.end_time as unknown as string),
+                                    remarks: action.remarks || ''
                                   });
                                   setEditingAction(action.id);
                                 }}
@@ -1252,6 +1626,32 @@ export default function WorkOrderDetailPage() {
                               >
                                 🗑️ Delete
                               </Button>
+                              {/* Complete / Revert buttons based on latest action date */}
+                              {(() => {
+                                const firstActionDate = (actionDates[action.id] && actionDates[action.id].length > 0) ? actionDates[action.id][0] : undefined;
+                                return (
+                                  <>
+                                    {firstActionDate && !firstActionDate.is_completed && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleCompleteAction(action.id, firstActionDate.id)}
+                                      >
+                                        ✅ Complete
+                                      </Button>
+                                    )}
+                                    {firstActionDate && firstActionDate.is_completed && (user?.role === 'admin' || user?.role === 'superadmin') && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleRevertAction(action.id, firstActionDate.id)}
+                                      >
+                                        ↩️ Revert
+                                      </Button>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </>
                           )}
                         </div>
@@ -1262,6 +1662,227 @@ export default function WorkOrderDetailPage() {
                         <span>Start: {action.start_time}</span>
                         <span className="mx-2">|</span>
                         <span>End: {action.end_time}</span>
+                      </div>
+
+                      {/* Action Dates Section */}
+                      <div className="mt-3">
+                        <div className="flex justify-between items-center mb-2">
+                          <h6 className="font-medium text-gray-700">Action Dates:</h6>
+                          {(actionDates[action.id] && actionDates[action.id].length > 0 ? !actionDates[action.id][0].is_completed : !action.is_completed) && selectedActionForStartAgain !== action.id ? (
+                            <Button 
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedActionForStartAgain(action.id);
+                                setStartAgainData(prev => ({
+                                  ...prev,
+                                  action_date: new Date().toISOString().split('T')[0],
+                                  start_time: '',
+                                  end_time: '',
+                                  technician_ids: (action.technicians || [])
+                                    .map((t) => t.technician_id)
+                                    .filter((id): id is number => typeof id === 'number')
+                                }));
+                              }}
+                            >
+                              🔄 Start Again
+                            </Button>
+                          ) : null}
+                        </div>
+
+                        {/* Start Again Form */}
+                        {selectedActionForStartAgain === action.id && (
+                          <div className="mb-3 p-3 bg-blue-50 rounded border border-blue-200">
+                            <div className="flex items-end gap-2">
+                              <div className="flex-1">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Work Date</label>
+                                <Input
+                                  label=""
+                                  type="date"
+                                  value={startAgainData.action_date}
+                                  min={(actionDates[action.id] && actionDates[action.id].length > 0) ? actionDates[action.id][0].action_date : undefined}
+                                  onChange={(e) => setStartAgainData(prev => ({ ...prev, action_date: e.target.value }))}
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">From Time *</label>
+                                <Input
+                                  label=""
+                                  type="time"
+                                  value={startAgainData.start_time}
+                                  onChange={(e) => setStartAgainData(prev => ({ ...prev, start_time: e.target.value }))}
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">To Time (optional)</label>
+                                <Input
+                                  label=""
+                                  type="time"
+                                  value={startAgainData.end_time}
+                                  onChange={(e) => setStartAgainData(prev => ({ ...prev, end_time: e.target.value }))}
+                                />
+                              </div>
+                              <div>
+                                <Button 
+                                  size="sm" 
+                                  onClick={async () => {
+                                    await handleStartAgain();
+                                    setStartAgainData(prev => ({
+                                      ...prev,
+                                      action_date: new Date().toISOString().split('T')[0],
+                                      start_time: '',
+                                      end_time: '',
+                                      technician_ids: []
+                                    }));
+                                    setSelectedActionForStartAgain(null);
+                                  }}
+                                  disabled={!startAgainData.action_date || !startAgainData.start_time}
+                                >
+                                  ✓ Save
+                                </Button>
+                              </div>
+                              <div>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSelectedActionForStartAgain(null);
+                                  }}
+                                >
+                                  ✖ Cancel
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-2">
+                              * From time is required. To time is optional until completion approval.
+                            </div>
+                          </div>
+                        )}
+                        
+                        {actionDates[action.id] && actionDates[action.id].length > 0 ? (
+                          <div className="space-y-2">
+                            {actionDates[action.id].map((actionDate) => (
+                              <div key={actionDate.id} className="p-2 bg-gray-50 rounded border">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <div className="text-sm text-gray-600">
+                                      <span>Date: {new Date(actionDate.action_date).toLocaleDateString('en-GB')}</span>
+                                      <span className="mx-2">|</span>
+                                      <span>Start: {actionDate.start_time}</span>
+                                      <span className="mx-2">|</span>
+                                      <span>End: {actionDate.end_time}</span>
+                                      <span className="mx-2">|</span>
+                                      <span className={`font-medium ${actionDate.is_completed ? 'text-green-600' : 'text-orange-600'}`}>
+                                        {actionDate.is_completed ? '✓ Completed' : '⏳ In Progress'}
+                                      </span>
+                                    </div>
+                                    {actionDate.technicians && actionDate.technicians.length > 0 && (
+                                      <div className="text-xs text-gray-500 mt-1">
+                                        Technicians: {actionDate.technicians.map((t: ActionTechnician) => t.name).join(', ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                    <div className="flex space-x-1">
+                                    <Button 
+                                      size="sm" 
+                                      variant="outline"
+                                      onClick={() => {
+                                        // Preselect the date in YYYY-MM-DD format for the date input.
+                                          // actionDate.action_date may come as 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SSZ'
+                                          const rawDate = (actionDate.action_date || '').toString();
+                                          let normalizedDate = '';
+                                          if (rawDate) {
+                                            const d = new Date(rawDate);
+                                            const y = d.getFullYear();
+                                            const m = String(d.getMonth() + 1).padStart(2, '0');
+                                            const da = String(d.getDate()).padStart(2, '0');
+                                            normalizedDate = `${y}-${m}-${da}`;
+                                          }
+
+                                        setEditingActionDate(actionDate.id);
+                                        setEditActionDateData({
+                                          action_date: normalizedDate,
+                                          start_time: actionDate.start_time || '',
+                                          end_time: actionDate.end_time || '',
+                                          is_completed: !!actionDate.is_completed,
+                                          technician_ids: actionDate.technicians?.map((t: ActionTechnician) => t.technician_id || 0) || []
+                                        });
+                                      }}
+                                    >
+                                      ✏️
+                                    </Button>
+                                    <Button 
+                                      size="sm" 
+                                      variant="outline"
+                                      onClick={() => handleDeleteActionDate(action.id, actionDate.id)}
+                                    >
+                                      🗑️
+                                    </Button>
+                                  </div>
+                                </div>
+                                
+                                {/* Edit Action Date Form */}
+                                {editingActionDate === actionDate.id && (
+                                  <div className="mt-2 p-2 bg-white rounded border">
+                                    <h6 className="font-medium text-gray-800 mb-2">Edit Action Date</h6>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                      <Input
+                                        label="Date"
+                                        type="date"
+                                        value={editActionDateData.action_date}
+                                        onChange={(e) => setEditActionDateData(prev => ({ ...prev, action_date: e.target.value }))}
+                                      />
+                                      <Input
+                                        label="Start Time"
+                                        type="time"
+                                        value={editActionDateData.start_time}
+                                        onChange={(e) => setEditActionDateData(prev => ({ ...prev, start_time: e.target.value }))}
+                                      />
+                                      <Input
+                                        label="End Time"
+                                        type="time"
+                                        value={editActionDateData.end_time}
+                                        onChange={(e) => setEditActionDateData(prev => ({ ...prev, end_time: e.target.value }))}
+                                      />
+                                    </div>
+                                    <div className="flex items-center mt-2 space-x-3">
+                                          <div className="flex items-center space-x-2">
+                                            {(() => {
+                                              const latestForAction = actionDates[action.id] && actionDates[action.id].length > 0 ? actionDates[action.id][0] : undefined;
+                                              const isLatest = latestForAction ? latestForAction.id === actionDate.id : false;
+                                              // Allow toggling completion only for the latest date. Admins may revert a completed earlier date.
+                                              const allowToggle = isLatest || (user && (user.role === 'admin' || user.role === 'superadmin') && actionDate.is_completed);
+                                              return (
+                                                <>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={editActionDateData.is_completed}
+                                                    onChange={(e) => setEditActionDateData(prev => ({ ...prev, is_completed: e.target.checked }))}
+                                                    className="rounded border-gray-300"
+                                                    disabled={!allowToggle}
+                                                  />
+                                                  <span className="text-sm font-medium text-gray-700">Completed</span>
+                                                </>
+                                              );
+                                            })()}
+                                          </div>
+                                    </div>
+                                    <div className="flex space-x-2 mt-2">
+                                      <Button size="sm" onClick={() => handleEditActionDate(action.id)}>
+                                        Update
+                                      </Button>
+                                      <Button size="sm" variant="outline" onClick={() => setEditingActionDate(null)}>
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500 italic">No additional dates added</div>
+                        )}
                       </div>
                       
                       {/* Edit Action Form */}
@@ -1293,6 +1914,12 @@ export default function WorkOrderDetailPage() {
                               value={editAction.end_time}
                               onChange={(e) => setEditAction(prev => ({ ...prev, end_time: e.target.value }))}
                             />
+                            <Input
+                              label="Remarks (optional)"
+                              value={editAction.remarks ?? ''}
+                              onChange={(e) => setEditAction(prev => ({ ...prev, remarks: e.target.value }))}
+                              placeholder="Any notes or remarks about this action"
+                            />
                           </div>
                           <div className="flex space-x-3 mt-3">
                             <Button size="sm" onClick={() => handleEditAction(action.id)}>
@@ -1306,14 +1933,55 @@ export default function WorkOrderDetailPage() {
                       )}
                       
                       {/* Spare parts for this action */}
-                      {(action.spare_parts || []).length > 0 && (
-                        <div className="ml-4">
-                          <h6 className="font-medium text-gray-700 mb-1">Spare Parts:</h6>
+                      <div className="ml-4 mt-3">
+                        <div className="flex justify-between items-center mb-1">
+                          <h6 className="font-medium text-gray-700">Spare Parts:</h6>
+                          {workOrder.status !== 'completed' && (
+                            <div className="flex items-end gap-2">
+                              <Input
+                                label=""
+                                value={newSparePart.part_name}
+                                onChange={(e) => setNewSparePart(prev => ({ ...prev, part_name: e.target.value }))}
+                                placeholder="Part name"
+                              />
+                              <Input
+                                label=""
+                                value={newSparePart.part_number}
+                                onChange={(e) => setNewSparePart(prev => ({ ...prev, part_number: e.target.value }))}
+                                placeholder="Part number"
+                              />
+                              <Input
+                                label=""
+                                type="number"
+                                value={newSparePart.quantity}
+                                onChange={(e) => setNewSparePart(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                                min="1"
+                              />
+                              <select
+                                className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[#08398F] focus:border-[#08398F]"
+                                value={newSparePart.unit || ''}
+                                onChange={(e) => setNewSparePart(prev => ({ ...prev, unit: e.target.value }))}
+                              >
+                                <option value="">Unit</option>
+                                {units.map(u => (
+                                  <option key={u.id} value={u.name}>{u.name}</option>
+                                ))}
+                              </select>
+                              <Button 
+                                size="sm" 
+                                onClick={() => handleAddSparePart(action.id)}
+                              >
+                                ➕ Add Spare
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        {(action.spare_parts || []).length > 0 && (
                           <div className="space-y-1">
                             {(action.spare_parts || []).map((sparePart) => (
                               <div key={sparePart.id} className="flex justify-between items-center p-2 bg-gray-50 rounded">
                                 <div className="text-sm text-gray-600">
-                                  {sparePart.part_name} ({sparePart.part_number}) - Qty: {sparePart.quantity}
+                                  {sparePart.part_name} ({sparePart.part_number}) - Qty: {sparePart.quantity}{sparePart.unit ? ` ${sparePart.unit}` : ''}
                                 </div>
                                 {workOrder.status !== 'completed' && (
                                   <div className="flex space-x-1">
@@ -1324,7 +1992,8 @@ export default function WorkOrderDetailPage() {
                                         setEditSparePart({
                                           part_name: sparePart.part_name,
                                           part_number: sparePart.part_number,
-                                          quantity: sparePart.quantity
+                                          quantity: sparePart.quantity,
+                                          unit: sparePart.unit || ''
                                         });
                                         setEditingSparePart(sparePart.id);
                                       }}
@@ -1343,8 +2012,11 @@ export default function WorkOrderDetailPage() {
                               </div>
                             ))}
                           </div>
-                        </div>
-                      )}
+                        )}
+                        {(action.spare_parts || []).length === 0 && (
+                          <p className="text-sm text-gray-500 italic">No spare parts added yet.</p>
+                        )}
+                      </div>
 
                       {/* Edit Spare Part Form */}
                       {editingSparePart && (action.spare_parts || []).find(sp => sp.id === editingSparePart) && (
@@ -1370,6 +2042,19 @@ export default function WorkOrderDetailPage() {
                               onChange={(e) => setEditSparePart(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
                               min="1"
                             />
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+                              <select
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[#08398F] focus:border-[#08398F]"
+                                value={editSparePart.unit || ''}
+                                onChange={(e) => setEditSparePart(prev => ({ ...prev, unit: e.target.value }))}
+                              >
+                                <option value="">Select unit</option>
+                                {units.map(u => (
+                                  <option key={u.id} value={u.name}>{u.name}</option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
                           <div className="flex space-x-3 mt-3">
                             <Button size="sm" onClick={() => handleEditSparePart(editingSparePart)}>
@@ -1451,6 +2136,18 @@ export default function WorkOrderDetailPage() {
                       </div>
                     </div>
                   ))}
+                  {(workOrder.status !== 'completed' && workOrder.status !== 'completion_requested') && (
+                    <div className="p-3 bg-white rounded border">
+                      <div className="flex items-end gap-2">
+                        <Button size="sm" onClick={() => setSelectedFindingForAction(prev => prev === finding.id ? null : finding.id)}>
+                          {selectedFindingForAction === finding.id ? '✖️ Close Add Action' : '➕ Add Action'}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setAddFindingFor(prev => prev === finding.id ? null : finding.id)}>
+                          {addFindingFor === finding.id ? '✖️ Close Add Finding' : '➕ Add Finding'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Add Action Form */}
@@ -1482,6 +2179,27 @@ export default function WorkOrderDetailPage() {
                         value={newAction.end_time}
                         onChange={(e) => setNewAction(prev => ({ ...prev, end_time: e.target.value }))}
                       />
+                      <Input
+                        label="Remarks (optional)"
+                        value={newAction.remarks || ''}
+                        onChange={(e) => setNewAction(prev => ({ ...prev, remarks: e.target.value }))}
+                        placeholder="Any notes or remarks about this action"
+                      />
+                      <div className="text-xs text-gray-500 col-span-1 md:col-span-2">
+                        From time is required; To time is optional. To time becomes required when requesting completion approval.
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={newAction.is_completed || false}
+                          onChange={(e) => setNewAction(prev => ({ ...prev, is_completed: e.target.checked }))}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="text-sm font-medium text-gray-700">Mark as completed</span>
+                      </label>
                     </div>
 
                     <div className="mt-3">
@@ -1517,6 +2235,31 @@ export default function WorkOrderDetailPage() {
                   </div>
                 )}
 
+                {/* Add Finding Inline Under This Finding */}
+                {addFindingFor === finding.id && (
+                  <div className="ml-4 mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                    <h5 className="font-medium text-blue-900 mb-2">Add Finding</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                      <div className="md:col-span-3">
+                        <Input
+                          label="Finding Description"
+                          value={newFinding.description}
+                          onChange={(e) => setNewFinding(prev => ({ ...prev, description: e.target.value }))}
+                          placeholder="Describe the finding or defect..."
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button className="w-full" onClick={async () => { await handleAddFinding(); setAddFindingFor(null); }}>
+                          ➕ Add Finding
+                        </Button>
+                        <Button variant="outline" onClick={() => { setAddFindingFor(null); setNewFinding({ description: '' }); }}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Add Spare Part Form */}
                 {selectedActionForSparePart && (finding.actions || []).find(a => a.id === selectedActionForSparePart) && (
                   <div className="ml-8 mt-3 p-3 bg-white rounded border">
@@ -1541,6 +2284,19 @@ export default function WorkOrderDetailPage() {
                         onChange={(e) => setNewSparePart(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
                         min="1"
                       />
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
+                        <select
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[#08398F] focus:border-[#08398F]"
+                          value={newSparePart.unit || ''}
+                          onChange={(e) => setNewSparePart(prev => ({ ...prev, unit: e.target.value }))}
+                        >
+                          <option value="">Select unit</option>
+                          {units.map(u => (
+                            <option key={u.id} value={u.name}>{u.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                     <div className="flex space-x-3 mt-3">
                       <Button size="sm" onClick={() => handleAddSparePart(selectedActionForSparePart)}>
@@ -1708,6 +2464,92 @@ export default function WorkOrderDetailPage() {
         </div>
       )}
 
+      {/* Start Again Modal */}
+      {showStartAgainModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+          <div className="bg-white p-8 rounded-lg shadow-xl max-w-2xl w-full mx-4">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Start Again - Add New Date</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <Input
+                label="Action Date"
+                type="date"
+                value={startAgainData.action_date}
+                onChange={(e) => setStartAgainData(prev => ({ ...prev, action_date: e.target.value }))}
+              />
+              <Input
+                label="Start Time"
+                type="time"
+                value={startAgainData.start_time}
+                onChange={(e) => setStartAgainData(prev => ({ ...prev, start_time: e.target.value }))}
+              />
+              <Input
+                label="End Time (optional)"
+                type="time"
+                value={startAgainData.end_time}
+                onChange={(e) => setStartAgainData(prev => ({ ...prev, end_time: e.target.value }))}
+              />
+              <div className="text-xs text-gray-500 col-span-1 md:col-span-2 -mt-2">
+                From time is required; To time is optional. To time becomes required when requesting completion approval.
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Assign Technicians</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-auto">
+                {technicians.map(t => {
+                  const checked = startAgainData.technician_ids.includes(t.id);
+                  return (
+                    <label key={t.id} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const isChecked = e.target.checked;
+                          setStartAgainData(prev => ({
+                            ...prev,
+                            technician_ids: isChecked 
+                              ? [...prev.technician_ids, t.id] 
+                              : prev.technician_ids.filter(id => id !== t.id)
+                          }));
+                        }}
+                      />
+                      <span className="text-sm text-gray-800">{t.name} ({t.staff_id})</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex space-x-3 mt-6">
+              <Button
+                onClick={handleStartAgain}
+                disabled={!startAgainData.action_date || !startAgainData.start_time}
+                className="flex-1"
+              >
+                Add Date
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowStartAgainModal(false);
+                  setSelectedActionForStartAgain(null);
+                  setStartAgainData({
+                    action_date: new Date().toISOString().split('T')[0],
+                    start_time: '',
+                    end_time: '',
+                    technician_ids: []
+                  });
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation Modals */}
       <ConfirmationModal
         isOpen={showDeleteFindingModal}
@@ -1722,6 +2564,19 @@ export default function WorkOrderDetailPage() {
           setItemToDelete(null);
         }}
       />
+
+      <ConfirmationModal
+        isOpen={showCompletionIssuesModal}
+        title="Cannot Request Completion"
+        message={completionIssuesMessage}
+        confirmText="OK"
+        cancelText="Close"
+        variant="warning"
+        onConfirm={() => setShowCompletionIssuesModal(false)}
+        onCancel={() => setShowCompletionIssuesModal(false)}
+      />
+
+      {/* Floating menu removed for one-click inline actions */}
 
       <ConfirmationModal
         isOpen={showDeleteActionModal}

@@ -66,6 +66,20 @@ export async function GET(request: NextRequest) {
                 )
                 FROM spare_parts sp
                 WHERE sp.action_id = a.id
+              ),
+              'action_dates', (
+                SELECT json_agg(
+                  json_build_object(
+                    'id', ad.id,
+                    'action_id', ad.action_id,
+                    'action_date', ad.action_date,
+                    'start_time', ad.start_time,
+                    'end_time', ad.end_time,
+                    'is_completed', ad.is_completed
+                  ) ORDER BY ad.action_date ASC
+                )
+                FROM action_dates ad
+                WHERE ad.action_id = a.id
               )
             )
           ) as actions
@@ -148,8 +162,11 @@ export async function GET(request: NextRequest) {
       let actionRow = 15; // Default to static position
       let actionsExceededLimit = false;
       
-      // First, collect all actions from all findings (filter out blank/empty actions)
-      const allActions: Array<{ id: number; description: string; action_date: string; start_time: string; end_time: string; }> = [];
+  // Define a type for action_date records returned by the DB
+  type ActionDateRecord = { action_date: string; start_time?: string | null; end_time?: string | null; };
+
+  // First, collect all actions from all findings (filter out blank/empty actions)
+  const allActions: Array<{ id: number; description: string; action_date: string; start_time: string; end_time: string; action_dates?: Array<ActionDateRecord> }> = [];
       for (const finding of findings) {
         if (finding.actions && Array.isArray(finding.actions)) {
           for (const action of finding.actions) {
@@ -183,9 +200,29 @@ export async function GET(request: NextRequest) {
           excelHelper.setCellValue(`A${actionRow}`, i + 1);
           actionIdToSymbolNumber.set(action.id, i + 1);
           excelHelper.setCellValue(`B${actionRow}`, action.description);
-          excelHelper.setCellValue(`C${actionRow}`, formatTime(action.start_time));
-          excelHelper.setCellValue(`D${actionRow}`, formatTime(action.end_time));
-          excelHelper.setCellValue(`E${actionRow}`, formatDate(action.action_date));
+          // If action_dates exist, aggregate start/end across dates; otherwise fall back to action row
+            if (action.action_dates && Array.isArray(action.action_dates) && action.action_dates.length > 0) {
+            const sortedDates = (action.action_dates as ActionDateRecord[]).slice().sort((a: ActionDateRecord, b: ActionDateRecord) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime());
+            const startDate = sortedDates[0].action_date;
+            const endDate = sortedDates[sortedDates.length - 1].action_date;
+            const startTime = sortedDates.find((d: ActionDateRecord) => d.start_time)?.start_time || action.start_time;
+            // pick the last non-null end_time moving from end
+            let endTime: string | null | undefined = action.end_time;
+            for (let idx = sortedDates.length - 1; idx >= 0; idx--) {
+              if (sortedDates[idx].end_time) { endTime = sortedDates[idx].end_time; break; }
+            }
+            excelHelper.setCellValue(`C${actionRow}`, formatTime(startTime));
+            excelHelper.setCellValue(`D${actionRow}`, formatTime(endTime || ''));
+            if (startDate === endDate) {
+              excelHelper.setCellValue(`E${actionRow}`, formatDate(startDate));
+            } else {
+              excelHelper.setCellValue(`E${actionRow}`, `${formatDate(startDate)}-${formatDate(endDate)}`);
+            }
+          } else {
+            excelHelper.setCellValue(`C${actionRow}`, formatTime(action.start_time));
+            excelHelper.setCellValue(`D${actionRow}`, formatTime(action.end_time));
+            excelHelper.setCellValue(`E${actionRow}`, formatDate(action.action_date));
+          }
           
           actionRow++;
         }
@@ -204,9 +241,27 @@ export async function GET(request: NextRequest) {
             excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
             actionIdToSymbolNumber.set(action.id, i + 1);
             excelHelper.setCellValue(`B${newRowNumber}`, action.description);
-            excelHelper.setCellValue(`C${newRowNumber}`, formatTime(action.start_time));
-            excelHelper.setCellValue(`D${newRowNumber}`, formatTime(action.end_time));
-            excelHelper.setCellValue(`E${newRowNumber}`, formatDate(action.action_date));
+              if (action.action_dates && Array.isArray(action.action_dates) && action.action_dates.length > 0) {
+              const sortedDates = (action.action_dates as ActionDateRecord[]).slice().sort((a: ActionDateRecord, b: ActionDateRecord) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime());
+              const startDate = sortedDates[0].action_date;
+              const endDate = sortedDates[sortedDates.length - 1].action_date;
+              const startTime = sortedDates.find((d: ActionDateRecord) => d.start_time)?.start_time || action.start_time;
+              let endTime: string | null | undefined = action.end_time;
+              for (let idx = sortedDates.length - 1; idx >= 0; idx--) {
+                if (sortedDates[idx].end_time) { endTime = sortedDates[idx].end_time; break; }
+              }
+              excelHelper.setCellValue(`C${newRowNumber}`, formatTime(startTime));
+              excelHelper.setCellValue(`D${newRowNumber}`, formatTime(endTime || ''));
+              if (startDate === endDate) {
+                excelHelper.setCellValue(`E${newRowNumber}`, formatDate(startDate));
+              } else {
+                excelHelper.setCellValue(`E${newRowNumber}`, `${formatDate(startDate)}-${formatDate(endDate)}`);
+              }
+            } else {
+              excelHelper.setCellValue(`C${newRowNumber}`, formatTime(action.start_time));
+              excelHelper.setCellValue(`D${newRowNumber}`, formatTime(action.end_time));
+              excelHelper.setCellValue(`E${newRowNumber}`, formatDate(action.action_date));
+            }
             
             // Move to next row for next iteration
             actionRow = newRowNumber + 1;
@@ -259,7 +314,8 @@ export async function GET(request: NextRequest) {
           excelHelper.setCellValue(`A${sparePartRow}`, i + 1);
           excelHelper.setCellValue(`B${sparePartRow}`, sparePart.part_name);
           excelHelper.setCellValue(`C${sparePartRow}`, sparePart.part_number);
-                     excelHelper.setCellValue(`D${sparePartRow}`, sparePart.quantity);
+          const quantityDisplay = sparePart.unit ? `${sparePart.quantity} ${sparePart.unit}` : sparePart.quantity;
+          excelHelper.setCellValue(`D${sparePartRow}`, quantityDisplay);
            
            sparePartRow++;
          }
@@ -278,7 +334,8 @@ export async function GET(request: NextRequest) {
             excelHelper.setCellValue(`A${newRowNumber}`, i + 1);
             excelHelper.setCellValue(`B${newRowNumber}`, sparePart.part_name);
             excelHelper.setCellValue(`C${newRowNumber}`, sparePart.part_number);
-            excelHelper.setCellValue(`D${newRowNumber}`, sparePart.quantity);
+            const quantityDisplay = sparePart.unit ? `${sparePart.quantity} ${sparePart.unit}` : sparePart.quantity;
+            excelHelper.setCellValue(`D${newRowNumber}`, quantityDisplay);
             
                          // Move to next row for next iteration
              sparePartRow = newRowNumber + 1;

@@ -86,6 +86,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = requireRoleAtLeast(request, 'user');
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');

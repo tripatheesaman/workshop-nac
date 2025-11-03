@@ -47,7 +47,8 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   const styles = getVariantStyles();
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    // Use a very large z-index so this modal always appears above other in-page modals (date pickers etc.)
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100000]">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
         <div className="p-6">
           <div className="flex items-center mb-4">

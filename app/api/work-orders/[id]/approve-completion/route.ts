@@ -61,6 +61,24 @@ export async function PUT(
       let queryParams: (string | number)[];
 
       if (approved) {
+        // Enforce that all action_dates linked to this work order have an end_time
+        // Cast end_time to text before comparing to avoid time parsing errors when column is of type time
+        const missingEndTimes = await client.query(`
+          SELECT ad.id, ad.action_id, ad.action_date
+          FROM action_dates ad
+          JOIN actions a ON a.id = ad.action_id
+          JOIN findings f ON f.id = a.finding_id
+          WHERE f.work_order_id = $1 AND (ad.end_time IS NULL OR trim(ad.end_time::text) = '')
+          ORDER BY ad.action_date DESC
+        `, [workOrderId]);
+
+        if (missingEndTimes.rows.length > 0) {
+          return NextResponse.json<ApiResponse<unknown>>({
+            success: false,
+            error: 'Cannot approve completion: some action dates are missing end time.',
+            data: { missing_end_times: missingEndTimes.rows }
+          }, { status: 400 });
+        }
         // Approve completion
         updateQuery = `
           UPDATE work_orders 

@@ -210,8 +210,7 @@ export const validateAction = (data: {
   });
 
   // Date and time validations
-  const dateError = validateDate(data.action_date, 'Action Date');
-  if (dateError) errors.push(dateError);
+  // NOTE: action_date date validation intentionally omitted — allow any date string
 
   const startTimeError = validateTime(data.start_time, 'Start Time');
   if (startTimeError) errors.push(startTimeError);

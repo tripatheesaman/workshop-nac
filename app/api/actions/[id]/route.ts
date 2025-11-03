@@ -13,7 +13,7 @@ export async function PUT(
     const { id } = await params;
     const actionId = parseInt(id);
     const body = await request.json();
-    const { description, action_date, start_time, end_time } = body;
+  const { description, action_date, start_time, end_time, remarks } = body;
 
     if (isNaN(actionId)) {
       return NextResponse.json<ApiResponse<null>>({
@@ -56,26 +56,41 @@ export async function PUT(
       const startTimestamp = `${action_date}T${start_time}:00`;
       const endTimestamp = `${action_date}T${end_time}:00`;
       
-      const result = await client.query(`
-        UPDATE actions 
-        SET description = $1, action_date = $2, start_time = $3, end_time = $4, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $5
-        RETURNING *
-      `, [description, action_date, startTimestamp, endTimestamp, actionId]);
+      // Try to update remarks if provided. If the column does not exist, catch and return a helpful message.
+      try {
+        const result = await client.query(`
+          UPDATE actions 
+          SET description = $1, action_date = $2, start_time = $3, end_time = $4, remarks = $5, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $6
+          RETURNING *
+        `, [description, action_date, startTimestamp, endTimestamp, remarks || null, actionId]);
 
-      if (result.rows.length === 0) {
-        return NextResponse.json<ApiResponse<null>>({
-          success: false,
-          error: 'Action not found'
-        }, { status: 404 });
+        if (result.rows.length === 0) {
+          return NextResponse.json<ApiResponse<null>>({
+            success: false,
+            error: 'Action not found'
+          }, { status: 404 });
+        }
+
+        const action = result.rows[0];
+
+        return NextResponse.json<ApiResponse<Action>>({
+          success: true,
+          data: action
+        });
+      } catch (err: unknown) {
+        if (err && typeof err === 'object' && 'code' in err) {
+          const e = err as { code?: string };
+          if (e.code === '42703') {
+            return NextResponse.json<ApiResponse<null>>({
+              success: false,
+              error: 'Database schema missing "remarks" column on actions. Please add the column `remarks text` to enable action remarks.'
+            }, { status: 500 });
+          }
+        }
+        throw err;
       }
-
-      const action = result.rows[0];
-
-      return NextResponse.json<ApiResponse<Action>>({
-        success: true,
-        data: action
-      });
+      
 
     } finally {
       client.release();
