@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '../../../lib/database';
 import { WorkOrder, ApiResponse } from '../../../types';
-import { requireRoleAtLeast } from '@/app/api/middleware';
+import { requireAuth } from '@/app/api/middleware';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 
@@ -30,6 +30,7 @@ interface WorkOrderDetail extends WorkOrder {
         part_name: string;
         part_number: string;
         quantity: number;
+        unit?: string;
         created_at: string;
         updated_at: string;
       }>;
@@ -95,6 +96,7 @@ export async function GET(
                      'action_date', a.action_date,
                      'start_time', a.start_time,
                      'end_time', a.end_time,
+                     'remarks', a.remarks,
                      'created_at', a.created_at,
                      'updated_at', a.updated_at,
                      'spare_parts', COALESCE(
@@ -105,6 +107,7 @@ export async function GET(
                            'part_name', sp.part_name,
                            'part_number', sp.part_number,
                            'quantity', sp.quantity,
+                           'unit', sp.unit,
                            'created_at', sp.created_at,
                            'updated_at', sp.updated_at
                          )
@@ -162,8 +165,11 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRoleAtLeast(request, 'admin');
+  // Authenticate user first
+  const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
+  const { user } = auth;
+
   try {
     const { id } = await params;
     const workOrderId = parseInt(id);
@@ -186,9 +192,20 @@ export async function PUT(
 
     const client = await pool.connect();
     try {
-      const existing = await client.query('SELECT reference_document FROM work_orders WHERE id = $1', [workOrderId]);
+      // Get work order and check permissions
+      const existing = await client.query('SELECT reference_document, requested_by_id, status FROM work_orders WHERE id = $1', [workOrderId]);
       if (existing.rows.length === 0) {
         return NextResponse.json({ success: false, error: 'Work order not found' }, { status: 404 });
+      }
+
+      const workOrder = existing.rows[0];
+      
+      // Check if user is admin/superadmin OR (user is the creator AND work order is rejected)
+      const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+      const isCreatorOfRejected = user.userId === workOrder.requested_by_id && workOrder.status === 'rejected';
+      
+      if (!isAdmin && !isCreatorOfRejected) {
+        return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
       }
       const oldDoc: string | null = existing.rows[0].reference_document || null;
 
@@ -231,8 +248,14 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = requireRoleAtLeast(request, 'admin');
+  const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
+  const { user } = auth;
+  
+  // Only admin and superadmin can delete work orders
+  if (user.role !== 'admin' && user.role !== 'superadmin') {
+    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
+  }
   try {
     const { id } = await params;
     const workOrderId = parseInt(id);

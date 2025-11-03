@@ -53,6 +53,18 @@ export interface ActionTechnician {
   created_at: string;
 }
 
+export interface ActionDate {
+  id: number;
+  action_id: number;
+  action_date: string;
+  start_time: string;
+  end_time: string;
+  is_completed: boolean;
+  created_at: string;
+  updated_at: string;
+  technicians?: ActionTechnician[];
+}
+
 export interface Action {
   id: number;
   finding_id: number;
@@ -60,9 +72,12 @@ export interface Action {
   action_date: string;
   start_time: string;
   end_time?: string;
+  remarks?: string;
   created_at: string;
   updated_at: string;
   technicians?: ActionTechnician[];
+  action_dates?: ActionDate[];
+  is_completed?: boolean;
 }
 
 export interface SparePart {
@@ -71,6 +86,14 @@ export interface SparePart {
   part_name: string;
   part_number: string;
   quantity: number;
+  unit?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Unit {
+  id: number;
+  name: string;
   created_at: string;
   updated_at: string;
 }
@@ -131,3 +154,12 @@ export interface WorkOrderFilters {
   page?: number;
   limit?: number;
 } 
+
+export interface TechnicianPerformance {
+  technician_id?: number;
+  name: string;
+  staff_id: string;
+  actions_worked: number;
+  completed_actions: number;
+  total_minutes: number;
+}

@@ -10,6 +10,7 @@ import { apiClient } from '../../utils/api';
 import { useToast } from '../../components/ToastContext';
 import { validateWorkOrder, validateFileSize, validateFileType } from '../../utils/validation';
 import { WorkOrder } from '../../types';
+import { WORK_TYPES } from '../../utils/workTypes';
 
 interface CreateWorkOrderForm {
   work_order_no: string;
@@ -38,63 +39,48 @@ export default function CreateWorkOrderPage() {
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<CreateWorkOrderForm>>({});
-  const [generatingNumber, setGeneratingNumber] = useState(false);
+  // generatingNumber removed — not used
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const router = useRouter();
   const toast = useToast();
 
-  // Generate a unique work order number
-  const generateWorkOrderNumber = async () => {
-    setGeneratingNumber(true);
-    try {
-      const currentYear = new Date().getFullYear();
-      const response = await apiClient.get<WorkOrder[]>(`/work-orders?status=all`);
-      
-      if (response.success && response.data) {
-        // Find the highest number for this year
-        const currentYearOrders = response.data.filter(order => 
-          order.work_order_no.includes(`WO-${currentYear}-`)
-        );
-        
-        let maxNumber = 0;
-        currentYearOrders.forEach(order => {
-          const match = order.work_order_no.match(new RegExp(`WO-${currentYear}-(\\d+)`));
-          if (match) {
-            const num = parseInt(match[1]);
-            if (num > maxNumber) maxNumber = num;
-          }
-        });
-        
-        const nextNumber = maxNumber + 1;
-        const newWorkOrderNo = `WO-${currentYear}-${nextNumber.toString().padStart(3, '0')}`;
-        
-        setFormData(prev => ({
-          ...prev,
-          work_order_no: newWorkOrderNo
-        }));
-      }
-    } catch {
-      // Fallback to a simple timestamp-based number
-      const timestamp = Date.now().toString().slice(-6);
-      const currentYear = new Date().getFullYear();
-      const fallbackNumber = `WO-${currentYear}-${timestamp}`;
-      
-      setFormData(prev => ({
-        ...prev,
-        work_order_no: fallbackNumber
-      }));
-    } finally {
-      setGeneratingNumber(false);
-    }
-  };
+  // generateWorkOrderNumber removed — not used
 
   // Set default date to today
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    setFormData(prev => ({
-      ...prev,
-      work_order_date: today
-    }));
+    // Try to preselect the latest created work order and its date
+    (async () => {
+      try {
+        const res = await apiClient.get<WorkOrder[]>('/work-orders?status=all');
+        if (res.success && res.data && res.data.length > 0) {
+          // Choose the most recently created work order (by created_at if available, otherwise highest id)
+          let latest = res.data[0];
+          if (res.data.length > 1) {
+            latest = res.data.reduce((a, b) => {
+              const aDate = a.created_at ? new Date(a.created_at).getTime() : a.id || 0;
+              const bDate = b.created_at ? new Date(b.created_at).getTime() : b.id || 0;
+              return bDate > aDate ? b : a;
+            });
+          }
+
+          const normalizedDate = latest.work_order_date ? (new Date(latest.work_order_date).toISOString().split('T')[0]) : new Date().toISOString().split('T')[0];
+          setFormData(prev => ({
+            ...prev,
+            work_order_no: latest.work_order_no || prev.work_order_no,
+            work_order_date: normalizedDate
+          }));
+          return;
+        }
+      } catch {
+        // ignore and fall back to today
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      setFormData(prev => ({
+        ...prev,
+        work_order_date: today
+      }));
+    })();
   }, []);
 
   const validateForm = (): boolean => {
@@ -307,16 +293,6 @@ export default function CreateWorkOrderPage() {
                 placeholder="e.g., WO-2024-001"
                 required
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={generateWorkOrderNumber}
-                loading={generatingNumber}
-                className="w-full"
-              >
-                {generatingNumber ? 'Generating...' : 'Generate Unique Number'}
-              </Button>
             </div>
 
             <Input
@@ -375,18 +351,9 @@ export default function CreateWorkOrderPage() {
                 required
               >
                 <option value="">Select work type</option>
-                <option value="Maintenance">Maintenance</option>
-                <option value="Repair">Repair</option>
-                <option value="Paint">Paint</option>
-                <option value="Dent">Dent</option>
-                <option value="Wheel">Wheel</option>
-                <option value="Tyre">Tyre</option>
-                <option value="Mechanical">Mechanical</option>
-                <option value="Fabrication">Fabrication</option>
-                <option value="Electrical">Electrical</option>
-                <option value="Battery">Battery</option>
-                <option value="ULD Containers">ULD Containers</option>
-                <option value="Others">Others</option>
+                {WORK_TYPES.map((type) => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
               </select>
               {errors.work_type && (
                 <p className="mt-1 text-sm text-red-600">{errors.work_type}</p>

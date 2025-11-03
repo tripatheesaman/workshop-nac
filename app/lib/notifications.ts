@@ -2,7 +2,7 @@ import pool from './database';
 
 export interface NotificationData {
   userId: number;
-  workOrderId: number;
+  relatedEntityId: number;
   type: 'approval' | 'rejection' | 'completion';
   title: string;
   message: string;
@@ -12,10 +12,10 @@ export async function createNotification(data: NotificationData) {
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `INSERT INTO notifications (user_id, work_order_id, type, title, message)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO notifications (user_id, related_entity_id, related_entity_type, type, title, message)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [data.userId, data.workOrderId, data.type, data.title, data.message]
+      [data.userId, data.relatedEntityId, 'work_order', data.type, data.title, data.message]
     );
     return result.rows[0];
   } catch (error) {
@@ -53,7 +53,7 @@ export async function createWorkOrderApprovalNotification(workOrderId: number, a
     if (workOrder.requested_by_id) {
       await createNotification({
         userId: workOrder.requested_by_id,
-        workOrderId: workOrderId,
+        relatedEntityId: workOrderId,
         type: 'approval',
         title: 'Work Order Approved',
         message: `Your work order ${workOrder.work_order_no} for equipment ${workOrder.equipment_number} has been approved by ${approverName}.`
@@ -93,7 +93,7 @@ export async function createWorkOrderRejectionNotification(workOrderId: number, 
     if (workOrder.requested_by_id) {
       await createNotification({
         userId: workOrder.requested_by_id,
-        workOrderId: workOrderId,
+        relatedEntityId: workOrderId,
         type: 'rejection',
         title: 'Work Order Rejected',
         message: `Your work order ${workOrder.work_order_no} for equipment ${workOrder.equipment_number} has been rejected by ${rejectorName}. Reason: ${reason || 'No reason provided'}.`

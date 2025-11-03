@@ -8,12 +8,18 @@ export async function POST(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
-    const {
-      action_id,
-      part_name,
-      part_number,
-      quantity
-    } = body;
+    const raw = body as {
+      action_id: number;
+      part_name: string;
+      part_number: string;
+      quantity: number;
+      unit?: string | null;
+    };
+    const { action_id, part_name, part_number, quantity, unit: _unit = null } = raw;
+    let unit = _unit;
+
+    // Normalize empty unit to null so FK to units(name) passes
+    if (unit === '') unit = null;
 
     // Validation
     if (!action_id || !part_name || !part_number || !quantity) {
@@ -83,14 +89,15 @@ export async function POST(request: NextRequest) {
 
       const result = await client.query(`
         INSERT INTO spare_parts (
-          action_id, part_name, part_number, quantity
-        ) VALUES ($1, $2, $3, $4)
+          action_id, part_name, part_number, quantity, unit
+        ) VALUES ($1, $2, $3, $4, $5)
         RETURNING *
       `, [
         action_id,
         part_name.trim(),
         part_number.trim(),
-        quantity
+        quantity,
+        unit
       ]);
 
       const sparePart = result.rows[0];

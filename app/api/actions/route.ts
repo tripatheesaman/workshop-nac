@@ -8,13 +8,19 @@ export async function POST(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   try {
     const body = await request.json();
-    const {
-      finding_id,
-      description,
-      action_date,
-      start_time,
-      end_time
-    } = body;
+    const raw = body as {
+      finding_id: number;
+      description: string;
+      action_date: string;
+      start_time: string;
+      end_time?: string | null;
+      is_completed?: boolean;
+      remarks?: string | null;
+    };
+    const { finding_id, description, action_date, start_time, is_completed = false, remarks = null, end_time: _end_time = null } = raw;
+    let end_time = _end_time;
+    // Normalize empty string to null for end_time
+    if (end_time === '') end_time = null;
 
     // Validation
     if (!finding_id || !description || !action_date || !start_time) {
@@ -117,25 +123,58 @@ export async function POST(request: NextRequest) {
       const startTimestamp = `${action_date}T${start_time}:00`;
       const endTimestamp = end_time ? `${action_date}T${end_time}:00` : null;
       
-      const result = await client.query(`
+  // Try to include remarks if the column exists. If not, return a helpful error.
+  let insertSql = '';
+  let insertParams: unknown[] = [];
+      try {
+        insertSql = `
         INSERT INTO actions (
-          finding_id, description, action_date, start_time, end_time
-        ) VALUES ($1, $2, $3, $4, $5)
+          finding_id, description, action_date, start_time, end_time, remarks
+        ) VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
-      `, [
-        finding_id,
-        description.trim(),
-        action_date,
-        startTimestamp,
-        endTimestamp
-      ]);
+      `;
+        insertParams = [
+          finding_id,
+          description.trim(),
+          action_date,
+          startTimestamp,
+          endTimestamp,
+          remarks
+        ];
+      const result = await client.query(insertSql, insertParams);
 
       const action = result.rows[0];
+
+      // Also create an entry in action_dates table
+      await client.query(`
+        INSERT INTO action_dates (
+          action_id, action_date, start_time, end_time, is_completed
+        ) VALUES ($1, $2, $3, $4, $5)
+      `, [
+        action.id,
+        action_date,
+        start_time, // Use original time string, not timestamp
+        end_time, // may be null; DB column should allow NULL
+        is_completed
+      ]);
 
       return NextResponse.json<ApiResponse<Action>>({
         success: true,
         data: action
       });
+      } catch (err: unknown) {
+        // If the DB doesn't have a remarks column, Postgres will throw error 42703
+        if (err && typeof err === 'object' && 'code' in err) {
+          const e = err as { code?: string };
+          if (e.code === '42703') {
+            return NextResponse.json<ApiResponse<null>>({
+              success: false,
+              error: 'Database schema does not have "remarks" column on actions. Please add the column `remarks text` to the actions table or ask an admin to run the migration.'
+            }, { status: 500 });
+          }
+        }
+        throw err;
+      }
 
     } finally {
       client.release();

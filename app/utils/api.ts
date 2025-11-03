@@ -12,7 +12,11 @@ class ApiClient {
 
   private getToken(): string | null {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('token');
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.warn('No authentication token found in localStorage');
+      }
+      return token;
     }
     return null;
   }
@@ -39,6 +43,17 @@ class ApiClient {
       });
 
       const data = await response.json();
+      
+      if (!response.ok && response.status === 401) {
+        // Check if token exists but is invalid
+        const token = this.getToken();
+        console.error('Authentication error:', {
+          hasToken: !!token,
+          status: response.status,
+          url: endpoint
+        });
+      }
+      
       return data;
     } catch (error) {
       return {
@@ -68,6 +83,22 @@ class ApiClient {
 
   async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'DELETE' });
+  }
+
+  async getBlob(endpoint: string): Promise<{ ok: boolean; blob?: Blob; filename?: string; status: number; }> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const resp = await fetch(url, { method: 'GET', headers });
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const match = /filename\s*=\s*"?([^";]+)"?/i.exec(cd || '');
+    const filename = match ? decodeURIComponent(match[1]) : undefined;
+    if (!resp.ok) {
+      return { ok: false, status: resp.status };
+    }
+    const blob = await resp.blob();
+    return { ok: true, blob, filename, status: resp.status };
   }
 }
 

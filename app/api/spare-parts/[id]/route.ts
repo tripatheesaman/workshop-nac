@@ -13,7 +13,12 @@ export async function PUT(
     const { id } = await params;
     const sparePartId = parseInt(id);
     const body = await request.json();
-    const { part_name, part_number, quantity } = body;
+    const { part_name, part_number, quantity, unit = null } = body as {
+      part_name?: string;
+      part_number?: string;
+      quantity?: number;
+      unit?: string | null;
+    };
 
     if (isNaN(sparePartId)) {
       return NextResponse.json<ApiResponse<null>>({
@@ -27,10 +32,10 @@ export async function PUT(
     try {
       const result = await client.query(`
         UPDATE spare_parts 
-        SET part_name = $1, part_number = $2, quantity = $3, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $4
+        SET part_name = $1, part_number = $2, quantity = $3, unit = $4, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $5
         RETURNING *
-      `, [part_name, part_number, quantity, sparePartId]);
+      `, [part_name, part_number, quantity, unit, sparePartId]);
 
       if (result.rows.length === 0) {
         return NextResponse.json<ApiResponse<null>>({
